@@ -23,10 +23,16 @@ const char* SIGNS[ET_EOL] = {
 #define TOWER_SIZE 50
 typedef struct Tower
 {
-    Vector2 pos;
+    Rectangle rect;
     EquationType type;
     int scale;
 } Tower;
+
+typedef struct Home
+{
+    Rectangle rect;
+    int health;
+} Home;
 
 #define FONT_SIZE 20
 
@@ -52,10 +58,16 @@ int main(void)
     int towerLen = 0;
     int currentType = ET_SUB;
     int currentScale = 1;
+    Home home = (Home){
+        .rect = {50, 200, TOWER_SIZE, TOWER_SIZE},
+        .health = 10,
+    };
+    Rectangle path = {100, 200, screenWidth - 100, TOWER_SIZE};
 
     // Main game loop
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
+        // Input
         int tileX = GetMouseX() / TOWER_SIZE;
         int tileY = GetMouseY() / TOWER_SIZE;
 
@@ -78,7 +90,7 @@ int main(void)
         if (IsMouseButtonPressed(1) && towerLen < MAX_TOWERS)
         {
             towers[towerLen++] = (Tower){
-                .pos = (Vector2){tileX * TOWER_SIZE, tileY * TOWER_SIZE},
+                .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
                 .type = currentType,
                 .scale = currentScale,
             };
@@ -87,12 +99,14 @@ int main(void)
         // Draw
         BeginDrawing();
 
-        ClearBackground(RAYWHITE);
+        ClearBackground(LIGHTGRAY);
 
         BeginMode2D(camera);
 
+        DrawRectangleRec(path, WHITE);
+
         // placement preview
-        DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, LIGHTGRAY);
+        DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, GRAY);
 
         char text[64] = "";
         int textWidthPixels = 0;
@@ -101,21 +115,30 @@ int main(void)
 
             Tower t = towers[i];
 
-            DrawRectangleV(t.pos, (Vector2){TOWER_SIZE, TOWER_SIZE}, GRAY);
+            DrawRectangleRec(t.rect, DARKGRAY);
 
             snprintf(text, sizeof(text), SIGNS[t.type], t.scale);
             textWidthPixels = MeasureText(text, 20);
             DrawText(text, 
-                t.pos.x + (TOWER_SIZE - textWidthPixels) / 2,
-                t.pos.y + (TOWER_SIZE - FONT_SIZE) / 2,
+                t.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
+                t.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
                 FONT_SIZE,
                 BLACK);
         }
 
+        DrawRectangleRec(home.rect, RED);
+        snprintf(text, sizeof(text), "%d", home.health);
+        textWidthPixels = MeasureText(text, 20);
+        DrawText(text, 
+            home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
+            home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
+            FONT_SIZE,
+            BLACK);
+
         EndMode2D();
 
         int yPos = 4;
-        snprintf(text, sizeof(text), "Towers: %d", towerLen);
+        snprintf(text, sizeof(text), "Towers: %d / %d", towerLen, MAX_TOWERS);
         DrawText(text, 4, yPos, 20, BLACK);
         yPos += 24;
         snprintf(text, sizeof(text), "Current sign: %s", SIGNS[currentType]);
