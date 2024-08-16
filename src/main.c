@@ -1,9 +1,11 @@
-#include "raylib.h"
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include <float.h>
+
+#include "raylib.h"
+#include "raymath.h"
 
 typedef enum EquationType 
 {
@@ -11,14 +13,13 @@ typedef enum EquationType
     ET_SUB,
     ET_MULT,
     ET_DIV,
-    ET_NEG_EXP,
     ET_SQRT,
-    ET_LOG,
+    ET_LOG_E,
 
     ET_EOL,
 } EquationType;
 const char* SIGNS[ET_EOL] = {
-    "+%d", "-%d", "*%d", "/%d", "^(-%d)", "root_%d()", "log_%d()"
+    "+%d", "-%d", "*%d", "/%d", "root()", "log_e()"
 };
 
 #define TOWER_SIZE 50
@@ -26,9 +27,12 @@ const char* SIGNS[ET_EOL] = {
 typedef struct Tower
 {
     Rectangle rect;
+    Vector2 center;
     EquationType type;
     int scale;
     int range;
+    unsigned int lastShot; // in frames
+    unsigned int cooldown; // in frames
 } Tower;
 
 typedef struct Home
@@ -45,6 +49,17 @@ typedef struct Enemy
     float health;
     bool alive;
 } Enemy;
+
+#define SHOT_SIZE 4
+#define SHOT_LIFETIME 60.0f
+typedef struct Shot
+{
+    int tower;
+    int target;
+    EquationType type;
+    int scale;
+    int life;
+} Shot;
 
 #define FONT_SIZE 20
 
@@ -65,6 +80,8 @@ int main(void)
 
     SetTargetFPS(60);
 
+    unsigned int frame = 0;
+
     const int MAX_TOWERS = 32;
     Tower *towers = calloc(MAX_TOWERS, sizeof(towers[0]));
     int towerLen = 0;
@@ -80,6 +97,11 @@ int main(void)
     Enemy *enemies = calloc(MAX_ENEMIES, sizeof(enemies[0]));
     int enemiesLen = 0;
 
+    const int MAX_SHOTS = 1024;
+    Shot *shots = calloc(MAX_SHOTS, sizeof(shots[0]));
+    unsigned int shotHead = 0;
+    unsigned int shotTail = 0;
+
     // Main game loop
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
@@ -88,6 +110,8 @@ int main(void)
         {
             towerLen = 0;
             home.health = 10;
+            shotHead = shotTail = 0;
+            enemiesLen = 0;
         }
 
         int tileX = GetMouseX() / TOWER_SIZE;
@@ -112,6 +136,8 @@ int main(void)
 
         if (IsKeyPressed(KEY_SPACE))
         {
+            assert(enemiesLen < MAX_ENEMIES);
+
             enemies[enemiesLen++] = (Enemy){
                 .pos = {screenWidth + 50, screenHeight / 2},
                 .speed = {-0.5, 0},
@@ -130,19 +156,48 @@ int main(void)
         {
             towers[towerLen++] = (Tower){
                 .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
+                .center = {(tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE},
                 .type = currentType,
                 .scale = currentScale,
                 .range = TOWER_RANGE,
+                .cooldown = 60,
             };
         }
 
         // Logic
-        for (int i = 0; i < enemiesLen; ++i)
+        for (int i_enemy = 0; i_enemy < enemiesLen; ++i_enemy)
         {
-            Enemy *e = enemies + i;
+            Enemy *e = enemies + i_enemy;
             if (!e->alive)
                 continue;
 
+            if (fabs(e->health) < FLT_EPSILON)
+            {
+                e->alive = false;
+                continue;
+            }
+
+            // tower in range -> shoot
+            for (int i_tower = 0; i_tower < towerLen; ++i_tower)
+            {
+                Tower *t = towers + i_tower;
+                if (!CheckCollisionCircles(e->pos, ENEMY_SIZE, t->center, t->range))
+                    continue;
+                if (frame - t->lastShot < t->cooldown)
+                    continue;
+
+                shots[shotHead % MAX_SHOTS] = (Shot){
+                    .tower = i_tower,
+                    .target = i_enemy, 
+                    .type = t->type,
+                    .scale = t->scale,
+                    .life = 0,
+                };
+                ++shotHead;
+                t->lastShot = frame;
+            }
+
+            // touch home -> remove itself + health
             if (CheckCollisionPointRec(e->pos, home.rect))
             {
                 --home.health;
@@ -150,8 +205,30 @@ int main(void)
                 continue;
             }
 
-            e->pos.x += e->speed.x;
-            e->pos.y += e->speed.y;
+            e->pos = Vector2Add(e->pos, e->speed);
+        }
+        for (int i_shot = shotTail; i_shot < shotHead; ++i_shot)
+        {
+            Shot *s = shots + (i_shot % MAX_SHOTS);
+
+            if (s->life == SHOT_LIFETIME)
+            {
+                assert(s->target < enemiesLen);
+                Enemy *e = enemies + s->target;
+
+                switch (s->type)
+                {
+                    case ET_ADD: e->health += s->scale; break;
+                    case ET_SUB: e->health -= s->scale; break;
+                    case ET_MULT: e->health *= s->scale; break;
+                    case ET_DIV: e->health /= s->scale; break;
+                    case ET_SQRT: e->health = sqrtf(e->health); break;
+                    case ET_LOG_E: e->health = logf(e->health); break;
+                }
+                ++shotTail;
+            }
+
+            s->life += 1;
         }
 
         // Draw
@@ -216,6 +293,15 @@ int main(void)
                 BLACK);
         }
 
+        // Shots
+        for (int i = shotTail; i < shotHead; ++i)
+        {
+            Shot s = shots[i];
+
+            Vector2 pos = Vector2Lerp(towers[s.tower].center, enemies[s.target].pos, s.life / SHOT_LIFETIME);
+            DrawCircleV(pos, SHOT_SIZE, GREEN);
+        }
+
         EndMode2D();
 
         // GUI
@@ -235,6 +321,8 @@ int main(void)
         DrawFPS(screenWidth - 80, 0);
 
         EndDrawing();
+
+        ++frame;
     }
 
     // De-Initialization

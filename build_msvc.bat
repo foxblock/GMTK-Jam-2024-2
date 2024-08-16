@@ -27,7 +27,7 @@ if "%INPUT%"=="clean" (exit /b)
 if not exist %OUT_DIR% mkdir %OUT_DIR%
 
 @echo on
-cl %COMMON% %OPTIONS% %INCLUDES% %DEFINES% %SOURCES% /Fe"%OUT_DIR%/%OUT_EXE%" /Fo%OUT_DIR%/ /link %LIBS%
+cl %COMMON% %OPTIONS% %INCLUDES% %DEFINES% %SOURCES% /Fe"%OUT_DIR%/%OUT_EXE%" /Fo%OUT_DIR%/ /link %LIBS% || exit /B
 @echo off
 
 copy /Y "bin\raylib.dll" %OUT_DIR%
