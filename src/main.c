@@ -87,7 +87,14 @@ int main(void)
             ++currentScale;
         else if (IsKeyPressed(KEY_DOWN) && currentScale > 0)
             --currentScale;
-        if (IsMouseButtonPressed(1) && towerLen < MAX_TOWERS)
+
+        bool posValid = !CheckCollisionPointRec(GetMousePosition(), path);
+        posValid &= !CheckCollisionPointRec(GetMousePosition(), home.rect);
+        for (int i = 0; i < towerLen; ++i) {
+            posValid &= !CheckCollisionPointRec(GetMousePosition(), towers[i].rect);
+        }
+
+        if (IsMouseButtonPressed(1) && towerLen < MAX_TOWERS && posValid)
         {
             towers[towerLen++] = (Tower){
                 .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
@@ -106,7 +113,7 @@ int main(void)
         DrawRectangleRec(path, WHITE);
 
         // placement preview
-        DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, GRAY);
+        DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, posValid ? GRAY : MAROON);
 
         char text[64] = "";
         int textWidthPixels = 0;
