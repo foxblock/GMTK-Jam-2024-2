@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
+#include <string.h>
 
 typedef enum EquationType 
 {
@@ -21,11 +22,13 @@ const char* SIGNS[ET_EOL] = {
 };
 
 #define TOWER_SIZE 50
+#define TOWER_RANGE 150
 typedef struct Tower
 {
     Rectangle rect;
     EquationType type;
     int scale;
+    int range;
 } Tower;
 
 typedef struct Home
@@ -81,6 +84,12 @@ int main(void)
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
         // Input
+        if (IsKeyPressed(KEY_R))
+        {
+            towerLen = 0;
+            home.health = 10;
+        }
+
         int tileX = GetMouseX() / TOWER_SIZE;
         int tileY = GetMouseY() / TOWER_SIZE;
 
@@ -123,6 +132,7 @@ int main(void)
                 .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
                 .type = currentType,
                 .scale = currentScale,
+                .range = TOWER_RANGE,
             };
         }
 
@@ -155,6 +165,10 @@ int main(void)
 
         // placement preview
         DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, posValid ? GRAY : MAROON);
+        if (posValid)
+        {
+            DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, BLACK);
+        }
 
         // Towers
         char text[64] = "";
