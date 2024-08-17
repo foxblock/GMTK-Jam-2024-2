@@ -120,7 +120,7 @@ typedef struct EnemyQueue
 
 
 #define FONT_SIZE 20
-#define MIN_FONT_SIZE 5
+#define MIN_FONT_SIZE 10
 
 Color enemyColor(const Enemy e)
 {
@@ -221,6 +221,7 @@ int main(void)
             home.health = 10;
             shotHead = shotTail = 0;
             enemiesLen = 0;
+            queueHead = queueTail = 0;
         }
 
         int tileX = GetMouseX() / TOWER_SIZE;
@@ -407,7 +408,8 @@ afterLogic:
 
             ++aliveCount;
             DrawCircleV(e.pos, ENEMY_SIZE, enemyColor(e));
-            snprintf(text, sizeof(text), "%.2g", e.health);
+            // %g option sometimes seems to hide decimals
+            snprintf(text, sizeof(text), "%.2f", e.health);
             int fontSize = FONT_SIZE;
             textWidthPixels = MeasureText(text, fontSize);
             while (textWidthPixels > ENEMY_SIZE && fontSize > MIN_FONT_SIZE)
