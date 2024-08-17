@@ -95,6 +95,7 @@ bool takeHealth(Enemy *e, Shot *s)
 
 #define TOWER_SIZE 50
 #define TOWER_RANGE 150
+#define TOWER_LIST_SIZE 16
 typedef struct Tower
 {
     Rectangle rect;
@@ -104,6 +105,8 @@ typedef struct Tower
     int range;
     unsigned int lastShot; // in frames
     unsigned int cooldown; // in frames
+    int enemiesShot[TOWER_LIST_SIZE];
+    unsigned int shotIndex;
 } Tower;
 
 typedef struct Home
@@ -118,6 +121,15 @@ typedef struct EnemyQueue
     float health;
 } EnemyQueue;
 
+bool hasAlreadyTargeted(int *list, int len, int index)
+{
+    for (int i = 0; i < len; ++i)
+    {
+        if (list[i] == index)
+            return true;
+    }
+    return false;
+}
 
 #define FONT_SIZE 20
 #define MIN_FONT_SIZE 10
@@ -278,6 +290,8 @@ int main(void)
                     continue;
                 if (!canTarget(t->type, e->health))
                     continue;
+                if (hasAlreadyTargeted(t->enemiesShot, TOWER_LIST_SIZE, i_enemy+1))
+                    continue;
 
                 shots[shotHead % MAX_SHOTS] = (Shot){
                     .tower = i_tower,
@@ -288,6 +302,8 @@ int main(void)
                 };
                 ++shotHead;
                 t->lastShot = frame;
+                t->enemiesShot[t->shotIndex % TOWER_LIST_SIZE] = (i_enemy + 1);
+                t->shotIndex++;
             }
 
             // touch home -> remove itself + health
