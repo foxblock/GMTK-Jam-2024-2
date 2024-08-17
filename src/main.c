@@ -238,13 +238,6 @@ int main(void)
             if (!e->alive)
                 continue;
 
-            // check for =0 with 2 decimals
-            if (fabs(e->health) < FLT_EPSILON)
-            {
-                e->alive = false;
-                continue;
-            }
-
             // tower in range -> shoot
             for (int i_tower = 0; i_tower < towerLen; ++i_tower)
             {
@@ -306,6 +299,14 @@ int main(void)
                 case ET_LOG_E: e->health = logf(e->health); break;
             }
             e->health = roundf(e->health * HEALTH_ROUNDING) / HEALTH_ROUNDING;
+
+            // check for =0 with 2 decimals
+            if (fabs(e->health) < FLT_EPSILON)
+            {
+                e->alive = false;
+                continue;
+            }
+            
             ++shotTail;
         }
         // spawn new enemies
