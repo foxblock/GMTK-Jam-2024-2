@@ -80,7 +80,17 @@ bool canTarget(EquationType tower, float enemy)
             return enemy > 0;
         default:
             assert(tower);
+            return false; // suppress compiler warning
     }
+}
+
+Color enemyColor(const Enemy e)
+{
+    if (e.health >= 1)
+        return SKYBLUE;
+    if (e.health <= -1)
+        return (Color){ 135, 255, 105, 255 };
+    return PINK;
 }
 
 int main(void)
@@ -243,6 +253,11 @@ int main(void)
             // shot has reached target
             assert(s->target < enemiesLen);
             Enemy *e = enemies + s->target;
+            if (!canTarget(s->type, e->health)) // prevent NaN
+            {
+                ++shotTail;
+                continue;
+            }
 
             switch (s->type)
             {
@@ -315,7 +330,7 @@ int main(void)
                 continue;
 
             ++aliveCount;
-            DrawCircleV(e.pos, ENEMY_SIZE, SKYBLUE);
+            DrawCircleV(e.pos, ENEMY_SIZE, enemyColor(e));
             snprintf(text, sizeof(text), "%.2g", e.health);
             int fontSize = FONT_SIZE;
             textWidthPixels = MeasureText(text, fontSize);
@@ -337,7 +352,7 @@ int main(void)
             Shot s = shots[i];
 
             Vector2 pos = Vector2Lerp(towers[s.tower].center, enemies[s.target].pos, s.life / SHOT_LIFETIME);
-            DrawCircleV(pos, SHOT_SIZE, GREEN);
+            DrawCircleV(pos, SHOT_SIZE, RED);
         }
 
         EndMode2D();
