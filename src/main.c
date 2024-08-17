@@ -551,7 +551,7 @@ afterLogic:
             ++currentScale;
         }
         if (GuiButton((Rectangle){xPos, yPos + (BUTTON_SIZE + GUI_SPACING) / 2, BUTTON_SIZE, (BUTTON_SIZE - GUI_SPACING) / 2}, 
-            GuiIconText(ICON_ARROW_UP, NULL)))
+            GuiIconText(ICON_ARROW_DOWN, NULL)))
         {
             if (currentScale > 1)
                 --currentScale;
