@@ -56,7 +56,7 @@ typedef struct Enemy
 
 typedef struct EnemyQueue
 {
-    int spawnFrame;
+    unsigned int spawnFrame;
     float health;
 } EnemyQueue;
 
@@ -105,6 +105,13 @@ Color enemyColor(const Enemy e)
 
 #define BUTTON_SIZE 40
 #define GUI_SPACING 4
+typedef enum EditBox 
+{
+    EB_NONE = -1,
+    EB_COUNT,
+    EB_HEALTH,
+    EB_SPACING,
+} EditBox;
 
 int main(void)
 {
@@ -151,11 +158,33 @@ int main(void)
     unsigned int shotTail = 0;
 
     Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING * 2, screenWidth, BUTTON_SIZE + GUI_SPACING * 2};
+    Rectangle countBox = {screenWidth - 124, 20, 120, 24};
+    char countText[16] = "1";
+    Rectangle healthBox = {screenWidth - 124, 48, 120, 24};
+    char healthText[64] = "10";
+    Rectangle spacingBox = {screenWidth - 124, 76, 120, 24};
+    char spacingText[16] = "120";
+    int editBoxActive = EB_NONE;
+    Rectangle queueButton = {screenWidth - 124, 104, 120, 24};
 
     // Main game loop
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
         // Input
+        if (CheckCollisionPointRec(GetMousePosition(), countBox) && IsMouseButtonPressed(0))
+        {
+            editBoxActive = EB_COUNT;
+        }
+        if (CheckCollisionPointRec(GetMousePosition(), healthBox) && IsMouseButtonPressed(0))
+        {
+            editBoxActive = EB_HEALTH;
+        }
+        if (CheckCollisionPointRec(GetMousePosition(), spacingBox) && IsMouseButtonPressed(0))
+        {
+            editBoxActive = EB_SPACING;
+        }
+        bool canPlaceTower = editBoxActive == EB_NONE;
+
         if (IsKeyPressed(KEY_R))
         {
             towerLen = 0;
@@ -170,23 +199,21 @@ int main(void)
         bool queueIsFull = (queueHead - queueTail >= QUEUE_SIZE);
         if (IsKeyPressed(KEY_SPACE) && !queueIsFull)
         {
-            assert(enemiesLen < MAX_ENEMIES);
-
-            queue[queueHead % QUEUE_SIZE] = (EnemyQueue){
-                .spawnFrame = frame,
-                .health = 10,
-            };
-            ++queueHead;
+            //
         }
 
-        bool posValid = !CheckCollisionPointRec(GetMousePosition(), path);
-        posValid &= !CheckCollisionPointRec(GetMousePosition(), home.rect);
-        posValid &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
-        for (int i = 0; i < towerLen; ++i) {
-            posValid &= !CheckCollisionPointRec(GetMousePosition(), towers[i].rect);
+        if (canPlaceTower)
+        {
+            canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), queueButton);
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), home.rect);
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
+            for (int i = 0; i < towerLen; ++i) {
+                canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), towers[i].rect);
+            }
         }
 
-        if (IsMouseButtonPressed(0) && towerLen < MAX_TOWERS && posValid && currentType != ET_NONE)
+        if (IsMouseButtonPressed(0) && towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
         {
             towers[towerLen++] = (Tower){
                 .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
@@ -282,6 +309,7 @@ int main(void)
             if (e.spawnFrame > frame)
                 break;
 
+            assert(enemiesLen < MAX_ENEMIES);
             enemies[enemiesLen++] = (Enemy){
                 .pos = {screenWidth + 50, screenHeight / 2},
                 .speed = {-0.5, 0},
@@ -303,8 +331,8 @@ int main(void)
         // placement preview
         if (currentType != ET_NONE)
         {
-            DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, posValid ? GRAY : MAROON);
-            if (posValid)
+            DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, canPlaceTower ? GRAY : MAROON);
+            if (canPlaceTower)
             {
                 DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, BLACK);
             }
@@ -380,6 +408,72 @@ int main(void)
         EndMode2D();
 
         // GUI
+        GuiLabel((Rectangle){countBox.x - 60, countBox.y, 60, countBox.height}, "Count:");
+        if (GuiTextBox(countBox, countText, sizeof(countText), editBoxActive == EB_COUNT))
+        {
+            int value = atoi(countText);
+            if (value <= 0)
+                value = 1;
+            snprintf(countText, sizeof(countText), "%d", value);
+
+            editBoxActive = EB_NONE;
+        }
+        if (editBoxActive == EB_COUNT) { GuiLock(); }
+        GuiLabel((Rectangle){healthBox.x - 60, healthBox.y, 60, healthBox.height}, "Health:");
+        if (GuiTextBox(healthBox, healthText, sizeof(healthText), editBoxActive == EB_HEALTH))
+        {
+            editBoxActive = EB_NONE;
+        }
+        if (editBoxActive == EB_HEALTH) { GuiLock(); }
+        GuiLabel((Rectangle){spacingBox.x - 60, spacingBox.y, 60, spacingBox.height}, "Spacing:");
+        if (GuiTextBox(spacingBox, spacingText, sizeof(spacingText), editBoxActive == EB_SPACING))
+        {
+            int value = atoi(spacingText);
+            if (value <= 0)
+                value = 120;
+            snprintf(spacingText, sizeof(spacingText), "%d", value);
+
+            editBoxActive = EB_NONE;
+        }
+        if (editBoxActive == EB_SPACING) { GuiLock(); }
+        if (GuiButton(queueButton, "Queue Spawn"))
+        {
+            int count = atoi(countText);
+            int spacing = atoi(spacingText);
+            assert(count > 0);
+            assert(spacing > 0);
+
+            unsigned int spawnFrame = frame;
+            while (count > 0)
+            {
+                char *buffer = strdup(healthText);
+                char *prev = buffer;
+                char *pos = strtok(prev, ",;");
+                while (pos != NULL)
+                {
+                    bool queueIsFull = (queueHead - queueTail >= QUEUE_SIZE);
+                    if (queueIsFull)
+                        break;
+
+                    float value = atof(pos);
+                    if (value == 0 || !isfinite(value))
+                        continue;
+
+                    queue[queueHead % QUEUE_SIZE] = (EnemyQueue){
+                        .spawnFrame = spawnFrame,
+                        .health = atof(pos),
+                    };
+                    ++queueHead;
+                    spawnFrame += spacing;
+                    prev = pos;
+                    pos = strtok(NULL, ",;");
+                }
+
+                free(buffer);
+                --count;
+            }
+        }
+
         int xPos = 4;
         int yPos = screenHeight - BUTTON_SIZE - GUI_SPACING;
         if (GuiButton((Rectangle){xPos, yPos, BUTTON_SIZE, (BUTTON_SIZE - GUI_SPACING) / 2}, 
@@ -422,6 +516,7 @@ int main(void)
 
         DrawFPS(screenWidth - 80, 0);
 
+        GuiUnlock();
         EndDrawing();
 
         ++frame;
