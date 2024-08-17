@@ -95,7 +95,7 @@ bool takeHealth(Enemy *e, Shot *s)
 
 #define TOWER_SIZE 50
 #define TOWER_RANGE 150
-#define TOWER_LIST_SIZE 16
+#define TOWER_LIST_SIZE 64
 typedef struct Tower
 {
     Rectangle rect;
@@ -507,7 +507,12 @@ afterLogic:
             assert(count > 0);
             assert(spacing > 0);
 
-            unsigned int spawnFrame = frame;
+            
+            unsigned int spawnFrame;
+            if (queueHead == queueTail) // queue is empty -> spawn immediately
+                spawnFrame = frame;
+            else
+                spawnFrame = queue[(queueHead - 1) % QUEUE_SIZE].spawnFrame + spacing;
             while (count > 0)
             {
                 char *buffer = strdup(healthText);
