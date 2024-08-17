@@ -62,6 +62,7 @@ typedef struct Shot
 } Shot;
 
 #define FONT_SIZE 20
+#define MIN_FONT_SIZE 5
 
 int main(void)
 {
@@ -181,9 +182,9 @@ int main(void)
             for (int i_tower = 0; i_tower < towerLen; ++i_tower)
             {
                 Tower *t = towers + i_tower;
-                if (!CheckCollisionCircles(e->pos, ENEMY_SIZE, t->center, t->range))
-                    continue;
                 if (frame - t->lastShot < t->cooldown)
+                    continue;
+                if (!CheckCollisionCircles(e->pos, ENEMY_SIZE, t->center, t->range))
                     continue;
 
                 shots[shotHead % MAX_SHOTS] = (Shot){
@@ -256,18 +257,24 @@ int main(void)
             Tower t = towers[i];
             DrawRectangleRec(t.rect, DARKGRAY);
             snprintf(text, sizeof(text), SIGNS[t.type], t.scale);
-            textWidthPixels = MeasureText(text, 20);
+            int fontSize = FONT_SIZE;
+            textWidthPixels = MeasureText(text, fontSize);
+            while (textWidthPixels > TOWER_SIZE && fontSize > MIN_FONT_SIZE)
+            {
+                fontSize /= 2;
+                textWidthPixels = MeasureText(text, fontSize);
+            }
             DrawText(text, 
                 t.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
-                t.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
-                FONT_SIZE,
+                t.rect.y + (TOWER_SIZE - fontSize) / 2,
+                fontSize,
                 WHITE);
         }
 
         // Home
         DrawRectangleRec(home.rect, RED);
         snprintf(text, sizeof(text), "%d", home.health);
-        textWidthPixels = MeasureText(text, 20);
+        textWidthPixels = MeasureText(text, FONT_SIZE);
         DrawText(text, 
             home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
             home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
@@ -285,11 +292,17 @@ int main(void)
             ++aliveCount;
             DrawCircleV(e.pos, ENEMY_SIZE, SKYBLUE);
             snprintf(text, sizeof(text), "%.2g", e.health);
-            textWidthPixels = MeasureText(text, 20);
+            int fontSize = FONT_SIZE;
+            textWidthPixels = MeasureText(text, fontSize);
+            while (textWidthPixels > ENEMY_SIZE && fontSize > MIN_FONT_SIZE)
+            {
+                fontSize /= 2;
+                textWidthPixels = MeasureText(text, fontSize);
+            }
             DrawText(text, 
                 e.pos.x - textWidthPixels / 2,
-                e.pos.y - FONT_SIZE / 2,
-                FONT_SIZE,
+                e.pos.y - fontSize / 2,
+                fontSize,
                 BLACK);
         }
 
@@ -307,16 +320,16 @@ int main(void)
         // GUI
         int yPos = 4;
         snprintf(text, sizeof(text), "Towers: %d / %d", towerLen, MAX_TOWERS);
-        DrawText(text, 4, yPos, 20, BLACK);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
         snprintf(text, sizeof(text), "Enemies: %d", aliveCount);
-        DrawText(text, 4, yPos, 20, BLACK);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
         snprintf(text, sizeof(text), "Current sign: %s", SIGNS[currentType]);
-        DrawText(text, 4, yPos, 20, BLACK);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
         snprintf(text, sizeof(text), "Current scale: %d", currentScale);
-        DrawText(text, 4, yPos, 20, BLACK);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
 
         DrawFPS(screenWidth - 80, 0);
 
