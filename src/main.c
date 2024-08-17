@@ -6,9 +6,13 @@
 
 #include "raylib.h"
 #include "raymath.h"
+#define RAYGUI_IMPLEMENTATION
+#include "raygui.h"
+#undef RAYGUI_IMPLEMENTATION
 
 typedef enum EquationType 
 {
+    ET_NONE = 0,
     ET_ADD,
     ET_SUB,
     ET_MULT,
@@ -19,7 +23,7 @@ typedef enum EquationType
     ET_EOL,
 } EquationType;
 const char* SIGNS[ET_EOL] = {
-    "+%d", "-%d", "*%d", "/%d", "root()", "log_e()"
+    "none", "+%d", "-%d", "*%d", "/%d", "root()", "log_e()"
 };
 
 #define TOWER_SIZE 50
@@ -93,6 +97,9 @@ Color enemyColor(const Enemy e)
     return PINK;
 }
 
+#define BUTTON_SIZE 40
+#define GUI_SPACING 4
+
 int main(void)
 {
     // Initialization
@@ -132,6 +139,8 @@ int main(void)
     unsigned int shotHead = 0;
     unsigned int shotTail = 0;
 
+    Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING * 2, screenWidth, BUTTON_SIZE + GUI_SPACING * 2};
+
     // Main game loop
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
@@ -147,23 +156,6 @@ int main(void)
         int tileX = GetMouseX() / TOWER_SIZE;
         int tileY = GetMouseY() / TOWER_SIZE;
 
-        if (GetMouseWheelMove() < 0)
-        {
-            --currentType;
-            if (currentType < 0)
-                currentType = ET_EOL-1;
-        }
-        else if (GetMouseWheelMove() > 0)
-        {
-            ++currentType;
-            if (currentType >= ET_EOL)
-                currentType = 0;
-        }
-        if (IsKeyPressed(KEY_UP))
-            ++currentScale;
-        else if (IsKeyPressed(KEY_DOWN) && currentScale > 0)
-            --currentScale;
-
         if (IsKeyPressed(KEY_SPACE))
         {
             assert(enemiesLen < MAX_ENEMIES);
@@ -178,11 +170,12 @@ int main(void)
 
         bool posValid = !CheckCollisionPointRec(GetMousePosition(), path);
         posValid &= !CheckCollisionPointRec(GetMousePosition(), home.rect);
+        posValid &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
         for (int i = 0; i < towerLen; ++i) {
             posValid &= !CheckCollisionPointRec(GetMousePosition(), towers[i].rect);
         }
 
-        if (IsMouseButtonPressed(1) && towerLen < MAX_TOWERS && posValid)
+        if (IsMouseButtonPressed(0) && towerLen < MAX_TOWERS && posValid && currentType != ET_NONE)
         {
             towers[towerLen++] = (Tower){
                 .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
@@ -282,10 +275,13 @@ int main(void)
         DrawRectangleRec(path, WHITE);
 
         // placement preview
-        DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, posValid ? GRAY : MAROON);
-        if (posValid)
+        if (currentType != ET_NONE)
         {
-            DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, BLACK);
+            DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, posValid ? GRAY : MAROON);
+            if (posValid)
+            {
+                DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, BLACK);
+            }
         }
 
         // Towers
@@ -358,18 +354,42 @@ int main(void)
         EndMode2D();
 
         // GUI
-        int yPos = 4;
+        int xPos = 4;
+        int yPos = screenHeight - BUTTON_SIZE - GUI_SPACING;
+        if (GuiButton((Rectangle){xPos, yPos, BUTTON_SIZE, (BUTTON_SIZE - GUI_SPACING) / 2}, 
+            GuiIconText(ICON_ARROW_UP, NULL)))
+        {
+            ++currentScale;
+        }
+        if (GuiButton((Rectangle){xPos, yPos + (BUTTON_SIZE + GUI_SPACING) / 2, BUTTON_SIZE, (BUTTON_SIZE - GUI_SPACING) / 2}, 
+            GuiIconText(ICON_ARROW_UP, NULL)))
+        {
+            if (currentScale > 1)
+                --currentScale;
+        }
+        xPos += BUTTON_SIZE + GUI_SPACING;
+        for (int i = 0; i < ET_EOL; ++i)
+        {
+            snprintf(text, sizeof(text), SIGNS[i], currentScale);
+            bool active = currentType == i;
+            GuiToggle((Rectangle){ xPos, yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
+            if (active)
+            {
+                currentType = i;
+            }
+            xPos += BUTTON_SIZE + GUI_SPACING;
+        }
+
+        yPos = 4;
         snprintf(text, sizeof(text), "Towers: %d / %d", towerLen, MAX_TOWERS);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Enemies: %d", aliveCount);
+        snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, enemiesLen, MAX_ENEMIES);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Current sign: %s", SIGNS[currentType]);
+        snprintf(text, sizeof(text), "Shots: %d -> %d", shotTail, shotHead);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Current scale: %d", currentScale);
-        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
 
         DrawFPS(screenWidth - 80, 0);
 
