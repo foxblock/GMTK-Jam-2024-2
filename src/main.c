@@ -54,6 +54,12 @@ typedef struct Enemy
     bool alive;
 } Enemy;
 
+typedef struct EnemyQueue
+{
+    int spawnFrame;
+    float health;
+} EnemyQueue;
+
 #define SHOT_SIZE 4
 #define SHOT_LIFETIME 60.0f
 #define HEALTH_ROUNDING 100
@@ -134,6 +140,11 @@ int main(void)
     Enemy *enemies = calloc(MAX_ENEMIES, sizeof(enemies[0]));
     int enemiesLen = 0;
 
+    const int QUEUE_SIZE = 16;
+    EnemyQueue *queue = calloc(QUEUE_SIZE, sizeof(queue[0]));
+    unsigned int queueHead = 0;
+    unsigned int queueTail = 0;
+
     const int MAX_SHOTS = 1024;
     Shot *shots = calloc(MAX_SHOTS, sizeof(shots[0]));
     unsigned int shotHead = 0;
@@ -156,16 +167,16 @@ int main(void)
         int tileX = GetMouseX() / TOWER_SIZE;
         int tileY = GetMouseY() / TOWER_SIZE;
 
-        if (IsKeyPressed(KEY_SPACE))
+        bool queueIsFull = (queueHead - queueTail >= QUEUE_SIZE);
+        if (IsKeyPressed(KEY_SPACE) && !queueIsFull)
         {
             assert(enemiesLen < MAX_ENEMIES);
 
-            enemies[enemiesLen++] = (Enemy){
-                .pos = {screenWidth + 50, screenHeight / 2},
-                .speed = {-0.5, 0},
+            queue[queueHead % QUEUE_SIZE] = (EnemyQueue){
+                .spawnFrame = frame,
                 .health = 10,
-                .alive = true,
             };
+            ++queueHead;
         }
 
         bool posValid = !CheckCollisionPointRec(GetMousePosition(), path);
@@ -233,7 +244,7 @@ int main(void)
 
             e->pos = Vector2Add(e->pos, e->speed);
         }
-        for (int i_shot = shotTail; i_shot < shotHead; ++i_shot)
+        for (int i_shot = shotTail; i_shot != shotHead; ++i_shot)
         {
             Shot *s = shots + (i_shot % MAX_SHOTS);
 
@@ -263,6 +274,21 @@ int main(void)
             }
             e->health = roundf(e->health * HEALTH_ROUNDING) / HEALTH_ROUNDING;
             ++shotTail;
+        }
+        // spawn new enemies
+        for (int i_queue = queueTail; i_queue != queueHead; ++i_queue)
+        {
+            EnemyQueue e = queue[i_queue % QUEUE_SIZE];
+            if (e.spawnFrame > frame)
+                break;
+
+            enemies[enemiesLen++] = (Enemy){
+                .pos = {screenWidth + 50, screenHeight / 2},
+                .speed = {-0.5, 0},
+                .health = e.health,
+                .alive = true,
+            };
+            ++queueTail;
         }
 
         // Draw
@@ -345,7 +371,7 @@ int main(void)
         // Shots
         for (int i = shotTail; i < shotHead; ++i)
         {
-            Shot s = shots[i];
+            Shot s = shots[i % MAX_SHOTS];
 
             Vector2 pos = Vector2Lerp(towers[s.tower].center, enemies[s.target].pos, s.life / SHOT_LIFETIME);
             DrawCircleV(pos, SHOT_SIZE, RED);
@@ -387,7 +413,10 @@ int main(void)
         snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, enemiesLen, MAX_ENEMIES);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Shots: %d -> %d", shotTail, shotHead);
+        snprintf(text, sizeof(text), "Queue: %d: %d -> %d", queueHead - queueTail, queueTail, queueHead);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
+        yPos += 24;
+        snprintf(text, sizeof(text), "Shots: %d: %d -> %d", shotHead - shotTail, shotTail, shotHead);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
 
