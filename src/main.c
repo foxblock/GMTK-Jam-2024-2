@@ -130,7 +130,7 @@ int main(void)
 
     SetTargetFPS(60);
 
-    unsigned int frame = 0;
+    unsigned int frame = -600; // test rollover robustness
 
     const int MAX_TOWERS = 32;
     Tower *towers = calloc(MAX_TOWERS, sizeof(towers[0]));
@@ -167,10 +167,12 @@ int main(void)
     int editBoxActive = EB_NONE;
     Rectangle queueButton = {screenWidth - 124, 104, 120, 24};
 
+    bool paused = false;
+
     // Main game loop
     while (!WindowShouldClose()) // Detect window close button or ESC key
     {
-        // Input
+        // ------------------ Input ------------------
         if (CheckCollisionPointRec(GetMousePosition(), countBox) && IsMouseButtonPressed(0))
         {
             editBoxActive = EB_COUNT;
@@ -196,10 +198,9 @@ int main(void)
         int tileX = GetMouseX() / TOWER_SIZE;
         int tileY = GetMouseY() / TOWER_SIZE;
 
-        bool queueIsFull = (queueHead - queueTail >= QUEUE_SIZE);
-        if (IsKeyPressed(KEY_SPACE) && !queueIsFull)
+        if (IsKeyPressed(KEY_SPACE))
         {
-            //
+            paused = !paused;
         }
 
         if (canPlaceTower)
@@ -225,7 +226,12 @@ int main(void)
             };
         }
 
-        // Logic
+        if (paused)
+        {
+            goto afterLogic;
+        }
+
+        // ------------------ Logic ------------------
         for (int i_enemy = 0; i_enemy < enemiesLen; ++i_enemy)
         {
             Enemy *e = enemies + i_enemy;
@@ -319,7 +325,10 @@ int main(void)
             ++queueTail;
         }
 
-        // Draw
+        ++frame;
+
+afterLogic:
+        // ------------------ Draw ------------------
         BeginDrawing();
 
         ClearBackground(LIGHTGRAY);
@@ -373,7 +382,7 @@ int main(void)
 
         // Enemies
         int aliveCount = 0;
-        for (int i = 0; i < enemiesLen; ++i)
+        for (int i = enemiesLen-1; i >= 0; --i)
         {
             Enemy e = enemies[i];
             if (!e.alive)
@@ -501,6 +510,9 @@ int main(void)
         }
 
         yPos = 4;
+        snprintf(text, sizeof(text), "Frame: %u", frame);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
+        yPos += 24;
         snprintf(text, sizeof(text), "Towers: %d / %d", towerLen, MAX_TOWERS);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
@@ -514,12 +526,15 @@ int main(void)
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
 
+        if (paused)
+        {
+            DrawText("PAUSED", screenWidth / 2, screenHeight / 2, FONT_SIZE, BLACK);
+        }
+
         DrawFPS(screenWidth - 80, 0);
 
         GuiUnlock();
         EndDrawing();
-
-        ++frame;
     }
 
     // De-Initialization
