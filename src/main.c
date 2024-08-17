@@ -64,6 +64,24 @@ typedef struct Shot
 #define FONT_SIZE 20
 #define MIN_FONT_SIZE 5
 
+bool canTarget(EquationType tower, float enemy)
+{
+    switch (tower)
+    {
+        case ET_ADD:
+        case ET_SUB:
+        case ET_MULT:
+        case ET_DIV:
+            return true;
+        case ET_SQRT:
+            return enemy > 0;
+        case ET_LOG_E:
+            return enemy > 0;
+        default:
+            assert(tower);
+    }
+}
+
 int main(void)
 {
     // Initialization
@@ -172,7 +190,8 @@ int main(void)
             if (!e->alive)
                 continue;
 
-            if (fabs(e->health) < FLT_EPSILON)
+            // check for =0 with 2 decimals
+            if (roundf(e->health * 100) == 0)
             {
                 e->alive = false;
                 continue;
@@ -185,6 +204,8 @@ int main(void)
                 if (frame - t->lastShot < t->cooldown)
                     continue;
                 if (!CheckCollisionCircles(e->pos, ENEMY_SIZE, t->center, t->range))
+                    continue;
+                if (!canTarget(t->type, e->health))
                     continue;
 
                 shots[shotHead % MAX_SHOTS] = (Shot){
