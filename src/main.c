@@ -52,6 +52,7 @@ typedef struct Enemy
 
 #define SHOT_SIZE 4
 #define SHOT_LIFETIME 60.0f
+#define HEALTH_ROUNDING 100
 typedef struct Shot
 {
     int tower;
@@ -191,7 +192,7 @@ int main(void)
                 continue;
 
             // check for =0 with 2 decimals
-            if (roundf(e->health * 100) == 0)
+            if (fabs(e->health) < FLT_EPSILON)
             {
                 e->alive = false;
                 continue;
@@ -233,24 +234,27 @@ int main(void)
         {
             Shot *s = shots + (i_shot % MAX_SHOTS);
 
-            if (s->life == SHOT_LIFETIME)
+            if (s->life != SHOT_LIFETIME)
             {
-                assert(s->target < enemiesLen);
-                Enemy *e = enemies + s->target;
-
-                switch (s->type)
-                {
-                    case ET_ADD: e->health += s->scale; break;
-                    case ET_SUB: e->health -= s->scale; break;
-                    case ET_MULT: e->health *= s->scale; break;
-                    case ET_DIV: e->health /= s->scale; break;
-                    case ET_SQRT: e->health = sqrtf(e->health); break;
-                    case ET_LOG_E: e->health = logf(e->health); break;
-                }
-                ++shotTail;
+                s->life += 1;
+                continue;
             }
 
-            s->life += 1;
+            // shot has reached target
+            assert(s->target < enemiesLen);
+            Enemy *e = enemies + s->target;
+
+            switch (s->type)
+            {
+                case ET_ADD: e->health += s->scale; break;
+                case ET_SUB: e->health -= s->scale; break;
+                case ET_MULT: e->health *= s->scale; break;
+                case ET_DIV: e->health /= s->scale; break;
+                case ET_SQRT: e->health = sqrtf(e->health); break;
+                case ET_LOG_E: e->health = logf(e->health); break;
+            }
+            e->health = roundf(e->health * HEALTH_ROUNDING) / HEALTH_ROUNDING;
+            ++shotTail;
         }
 
         // Draw
