@@ -306,14 +306,14 @@ int main(void)
                 e->alive = false;
                 continue;
             }
-            
+
             ++shotTail;
         }
         // spawn new enemies
         for (int i_queue = queueTail; i_queue != queueHead; ++i_queue)
         {
             EnemyQueue e = queue[i_queue % QUEUE_SIZE];
-            if (e.spawnFrame > frame)
+            if (e.spawnFrame - frame < frame - e.spawnFrame)
                 break;
 
             assert(enemiesLen < MAX_ENEMIES);
