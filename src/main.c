@@ -19,12 +19,79 @@ typedef enum EquationType
     ET_DIV,
     ET_SQRT,
     ET_LOG_E,
+    ET_LOG_2,
+    ET_LOG_10,
 
     ET_EOL,
 } EquationType;
 const char* SIGNS[ET_EOL] = {
-    "none", "+%d", "-%d", "*%d", "/%d", "root()", "log_e()"
+    "none", "+%d", "-%d", "*%d", "/%d", "root()", "log_e()", "log_2()", "log_10"
 };
+
+#define ENEMY_SIZE 20
+typedef struct Enemy
+{
+    Vector2 pos; // center
+    Vector2 speed;
+    float health;
+    bool alive;
+} Enemy;
+
+#define SHOT_SIZE 4
+#define SHOT_LIFETIME 60.0f
+typedef struct Shot
+{
+    int tower;
+    int target;
+    EquationType type;
+    int scale;
+    int life;
+} Shot;
+
+bool canTarget(EquationType tower, float enemy)
+{
+    switch (tower)
+    {
+        case ET_ADD:
+        case ET_SUB:
+        case ET_MULT:
+        case ET_DIV:
+            return true;
+        case ET_SQRT:
+        case ET_LOG_E:
+        case ET_LOG_2:
+        case ET_LOG_10:
+            return enemy > 0;
+        default:
+            assert(tower < 0);
+            return false; // suppress compiler warning
+    }
+}
+
+#define HEALTH_ROUNDING 100
+// takes health and returns whether enemy is alive after hit
+bool takeHealth(Enemy *e, Shot *s)
+{
+    switch (s->type)
+    {
+        case ET_ADD: e->health += s->scale; break;
+        case ET_SUB: e->health -= s->scale; break;
+        case ET_MULT: e->health *= s->scale; break;
+        case ET_DIV: e->health /= s->scale; break;
+        case ET_SQRT: e->health = sqrtf(e->health); break;
+        case ET_LOG_E: e->health = logf(e->health); break;
+        case ET_LOG_2: e->health = log2f(e->health); break;
+        case ET_LOG_10: e->health = log10f(e->health); break;
+    }
+    e->health = roundf(e->health * HEALTH_ROUNDING) / HEALTH_ROUNDING;
+
+    // check for =0 with 2 decimals
+    if (fabs(e->health) < FLT_EPSILON)
+    {
+        return false;
+    }
+    return true;
+}
 
 #define TOWER_SIZE 50
 #define TOWER_RANGE 150
@@ -45,54 +112,15 @@ typedef struct Home
     int health;
 } Home;
 
-#define ENEMY_SIZE 20
-typedef struct Enemy
-{
-    Vector2 pos; // center
-    Vector2 speed;
-    float health;
-    bool alive;
-} Enemy;
-
 typedef struct EnemyQueue
 {
     unsigned int spawnFrame;
     float health;
 } EnemyQueue;
 
-#define SHOT_SIZE 4
-#define SHOT_LIFETIME 60.0f
-#define HEALTH_ROUNDING 100
-typedef struct Shot
-{
-    int tower;
-    int target;
-    EquationType type;
-    int scale;
-    int life;
-} Shot;
 
 #define FONT_SIZE 20
 #define MIN_FONT_SIZE 5
-
-bool canTarget(EquationType tower, float enemy)
-{
-    switch (tower)
-    {
-        case ET_ADD:
-        case ET_SUB:
-        case ET_MULT:
-        case ET_DIV:
-            return true;
-        case ET_SQRT:
-            return enemy > 0;
-        case ET_LOG_E:
-            return enemy > 0;
-        default:
-            assert(tower);
-            return false; // suppress compiler warning
-    }
-}
 
 Color enemyColor(const Enemy e)
 {
@@ -147,7 +175,7 @@ int main(void)
     Enemy *enemies = calloc(MAX_ENEMIES, sizeof(enemies[0]));
     int enemiesLen = 0;
 
-    const int QUEUE_SIZE = 16;
+    const int QUEUE_SIZE = 32;
     EnemyQueue *queue = calloc(QUEUE_SIZE, sizeof(queue[0]));
     unsigned int queueHead = 0;
     unsigned int queueTail = 0;
@@ -158,14 +186,14 @@ int main(void)
     unsigned int shotTail = 0;
 
     Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING * 2, screenWidth, BUTTON_SIZE + GUI_SPACING * 2};
-    Rectangle countBox = {screenWidth - 124, 20, 120, 24};
+    Rectangle countBox = {screenWidth - 124, 32, 120, 24};
     char countText[16] = "1";
-    Rectangle healthBox = {screenWidth - 124, 48, 120, 24};
-    char healthText[64] = "10";
-    Rectangle spacingBox = {screenWidth - 124, 76, 120, 24};
+    Rectangle healthBox = {screenWidth - 124, 60, 120, 24};
+    char healthText[256] = "10";
+    Rectangle spacingBox = {screenWidth - 124, 88, 120, 24};
     char spacingText[16] = "120";
     int editBoxActive = EB_NONE;
-    Rectangle queueButton = {screenWidth - 124, 104, 120, 24};
+    Rectangle queueButton = {screenWidth - 124, 116, 120, 24};
 
     bool paused = false;
 
@@ -206,6 +234,7 @@ int main(void)
         if (canPlaceTower)
         {
             canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), queueButton);
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), (Rectangle){0, 0, screenWidth, 30});
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), home.rect);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
@@ -289,22 +318,9 @@ int main(void)
                 continue;
             }
 
-            switch (s->type)
-            {
-                case ET_ADD: e->health += s->scale; break;
-                case ET_SUB: e->health -= s->scale; break;
-                case ET_MULT: e->health *= s->scale; break;
-                case ET_DIV: e->health /= s->scale; break;
-                case ET_SQRT: e->health = sqrtf(e->health); break;
-                case ET_LOG_E: e->health = logf(e->health); break;
-            }
-            e->health = roundf(e->health * HEALTH_ROUNDING) / HEALTH_ROUNDING;
-
-            // check for =0 with 2 decimals
-            if (fabs(e->health) < FLT_EPSILON)
+            if (!takeHealth(e, s))
             {
                 e->alive = false;
-                continue;
             }
 
             ++shotTail;
@@ -418,6 +434,26 @@ afterLogic:
         EndMode2D();
 
         // GUI
+        int btnPos = screenWidth - GUI_SPACING - 60;
+        if (GuiButton((Rectangle){btnPos, 4, 60, 24}, "Primes"))
+        {
+            healthText[0] = 0;
+            strncat(healthText, "2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131", sizeof(healthText) - 1);
+        }
+        btnPos -= 60 + GUI_SPACING;
+        if (GuiButton((Rectangle){btnPos, 4, 60, 24}, "Log 10"))
+        {
+            healthText[0] = 0;
+            strncat(healthText, "1,10,100,1000,1e5,1e6,1e7,1e8,1e9,1e10", sizeof(healthText) - 1);
+        }
+        btnPos -= 60 + GUI_SPACING;
+        if (GuiButton((Rectangle){btnPos, 4, 60, 24}, "+/-"))
+        {
+            healthText[0] = 0;
+            strncat(healthText, "1,-2,3,-4,5,-6,7,-8,9,-10,11,-12,13,-14,15,-16,17,-18,19,-20,21,-22,23,-24,25,-26,27,-28,29,-30,31,-32", sizeof(healthText) - 1);
+        }
+        btnPos -= 60 + GUI_SPACING;
+
         GuiLabel((Rectangle){countBox.x - 60, countBox.y, 60, countBox.height}, "Count:");
         if (GuiTextBox(countBox, countText, sizeof(countText), editBoxActive == EB_COUNT))
         {
