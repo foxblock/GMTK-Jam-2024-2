@@ -38,15 +38,31 @@ typedef struct Enemy
 } Enemy;
 
 #define SHOT_SIZE 4
-#define SHOT_LIFETIME 60.0f
+#define SHOT_LIFETIME 12
 typedef struct Shot
 {
     int tower;
     int target;
     EquationType type;
     int scale;
-    int life;
+    int shotLife;
 } Shot;
+
+#define TOWER_SIZE 50
+#define TOWER_RANGE 150
+#define TOWER_LIST_SIZE 64
+typedef struct Tower
+{
+    Rectangle rect;
+    Vector2 center;
+    EquationType type;
+    int scale;
+    int range;
+    unsigned int lastShot; // in frames
+    unsigned int cooldown; // in frames
+    int enemiesShot[TOWER_LIST_SIZE];
+    unsigned int shotIndex;
+} Tower;
 
 bool canTarget(EquationType tower, float enemy)
 {
@@ -70,14 +86,14 @@ bool canTarget(EquationType tower, float enemy)
 
 #define HEALTH_ROUNDING 100
 // takes health and returns whether enemy is alive after hit
-bool takeHealth(Enemy *e, Shot *s)
+bool takeHealth(Enemy *e, Tower *t)
 {
-    switch (s->type)
+    switch (t->type)
     {
-        case ET_ADD: e->health += s->scale; break;
-        case ET_SUB: e->health -= s->scale; break;
-        case ET_MULT: e->health *= s->scale; break;
-        case ET_DIV: e->health /= s->scale; break;
+        case ET_ADD: e->health += t->scale; break;
+        case ET_SUB: e->health -= t->scale; break;
+        case ET_MULT: e->health *= t->scale; break;
+        case ET_DIV: e->health /= t->scale; break;
         case ET_SQRT: e->health = sqrtf(e->health); break;
         case ET_LOG_E: e->health = logf(e->health); break;
         case ET_LOG_2: e->health = log2f(e->health); break;
@@ -92,22 +108,6 @@ bool takeHealth(Enemy *e, Shot *s)
     }
     return true;
 }
-
-#define TOWER_SIZE 50
-#define TOWER_RANGE 150
-#define TOWER_LIST_SIZE 64
-typedef struct Tower
-{
-    Rectangle rect;
-    Vector2 center;
-    EquationType type;
-    int scale;
-    int range;
-    unsigned int lastShot; // in frames
-    unsigned int cooldown; // in frames
-    int enemiesShot[TOWER_LIST_SIZE];
-    unsigned int shotIndex;
-} Tower;
 
 typedef struct Home
 {
@@ -298,12 +298,17 @@ int main(void)
                     .target = i_enemy, 
                     .type = t->type,
                     .scale = t->scale,
-                    .life = 0,
+                    .shotLife = SHOT_LIFETIME,
                 };
                 ++shotHead;
                 t->lastShot = frame;
                 t->enemiesShot[t->shotIndex % TOWER_LIST_SIZE] = (i_enemy + 1);
                 t->shotIndex++;
+
+                if (!takeHealth(e, t))
+                {
+                    e->alive = false;
+                }
             }
 
             // touch home -> remove itself + health
@@ -320,27 +325,13 @@ int main(void)
         {
             Shot *s = shots + (i_shot % MAX_SHOTS);
 
-            if (s->life != SHOT_LIFETIME)
-            {
-                s->life += 1;
-                continue;
-            }
-
-            // shot has reached target
-            assert(s->target < enemiesLen);
-            Enemy *e = enemies + s->target;
-            if (!canTarget(s->type, e->health)) // prevent NaN
+            if (s->shotLife == 0)
             {
                 ++shotTail;
                 continue;
             }
 
-            if (!takeHealth(e, s))
-            {
-                e->alive = false;
-            }
-
-            ++shotTail;
+            --s->shotLife;
         }
         // spawn new enemies
         for (int i_queue = queueTail; i_queue != queueHead; ++i_queue)
@@ -445,8 +436,13 @@ afterLogic:
         {
             Shot s = shots[i % MAX_SHOTS];
 
-            Vector2 pos = Vector2Lerp(towers[s.tower].center, enemies[s.target].pos, s.life / SHOT_LIFETIME);
-            DrawCircleV(pos, SHOT_SIZE, RED);
+            Vector2 varTower = {rand() % 4 - 2, rand() % 4 - 2};
+            Vector2 varTarget = {rand() % 8 - 4, rand() % 8 - 4};
+
+            DrawLineV(
+                Vector2Add(towers[s.tower].center, varTower), 
+                Vector2Add(enemies[s.target].pos, varTarget),
+                RED);
         }
 
         EndMode2D();
