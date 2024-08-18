@@ -112,6 +112,13 @@ void state_init(GameState *s)
     s->queueTail = 0;
 }
 
+void state_free(GameState *s)
+{
+    free(s->towers);
+    free(s->enemies);
+    free(s->queue);
+}
+
 void state_reset(GameState *s)
 {
     s->towerLen = 0;
@@ -249,27 +256,106 @@ typedef enum EditBox
     EB_SPACING,
 } EditBox;
 
+typedef enum Scene
+{
+    SC_MENU,
+    SC_TURORIAL,
+    SC_LEVEL_SELECT,
+    SC_LEVEL,
+    SC_PLAYGROUND,
+} Scene;
+
+const int screenWidth = 800;
+const int screenHeight = 450;
+Scene scene;
+
+void menu(void);
+void playground(GameState *state);
+
 int main(void)
 {
-    // Initialization
-    //--------------------------------------------------------------------------------------
-    const int screenWidth = 800;
-    const int screenHeight = 450;
-
     InitWindow(screenWidth, screenHeight, "Scale TD");
 
+    SetTargetFPS(60);
+
+    GameState state;
+    state_init(&state);
+
+    scene = SC_MENU;
+
+    while (!WindowShouldClose()) // Detect window close button or ESC key
+    {
+        switch (scene)
+        {
+            case SC_MENU:
+                menu();
+                break;
+            case SC_PLAYGROUND:
+                state_reset(&state);
+                playground(&state);
+                break;
+        }
+    }
+
+    state_free(&state);
+
+    // De-Initialization
+    CloseWindow();
+
+    return 0;
+}
+
+void menu(void)
+{
+    bool sceneChange = false;
+
+    // Main game loop
+    while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
+    {
+        BeginDrawing();
+
+        ClearBackground(LIGHTGRAY);
+
+        int textW = MeasureText("Scale TD", 100);
+        DrawText("Scale TD", (screenWidth - textW) / 2, 40, 100, BLACK);
+
+        GuiSetState(STATE_DISABLED);
+        int yPos = 300;
+        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Tutorial"))
+        {
+            scene = SC_TURORIAL;
+            sceneChange = true;
+        }
+        yPos += 40;
+        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Level select"))
+        {
+            scene = SC_LEVEL_SELECT;
+            sceneChange = true;
+        }
+        GuiSetState(STATE_NORMAL);
+        yPos += 40;
+        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Playground"))
+        {
+            scene = SC_PLAYGROUND;
+            sceneChange = true;
+        }
+        yPos += 40;
+
+        GuiUnlock();
+
+        EndDrawing();
+    }
+}
+
+void playground(GameState *state)
+{
     Camera2D camera = { 0 };
     camera.target = (Vector2){ screenWidth / 2, screenHeight / 2 };
     camera.offset = (Vector2){ screenWidth/2.0f, screenHeight/2.0f };
     camera.rotation = 0.0f;
     camera.zoom = 1.0f;
 
-    SetTargetFPS(60);
-
     unsigned int frame = -600; // test rollover robustness
-
-    GameState state;
-    state_init(&state);
     
     Rectangle path = {100, 200, screenWidth - 100, TOWER_SIZE};
     int currentType = ET_SUB;
@@ -314,7 +400,7 @@ int main(void)
 
         if (IsKeyPressed(KEY_R))
         {
-            state_reset(&state);
+            state_reset(state);
             shotHead = shotTail = 0;
         }
 
@@ -331,16 +417,16 @@ int main(void)
             canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), queueButton);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), (Rectangle){0, 0, screenWidth, 30});
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state.home.rect);
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->home.rect);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
-            for (int i = 0; i < state.towerLen; ++i) {
-                canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state.towers[i].rect);
+            for (int i = 0; i < state->towerLen; ++i) {
+                canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->towers[i].rect);
             }
         }
 
-        if (IsMouseButtonPressed(0) && state.towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
+        if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
         {
-            state_addTower(&state, tileX, tileY, currentType, currentScale);
+            state_addTower(state, tileX, tileY, currentType, currentScale);
         }
 
         if (paused)
@@ -349,16 +435,16 @@ int main(void)
         }
 
         // ------------------ Logic ------------------
-        for (int i_enemy = 0; i_enemy < state.enemiesLen; ++i_enemy)
+        for (int i_enemy = 0; i_enemy < state->enemiesLen; ++i_enemy)
         {
-            Enemy *e = state.enemies + i_enemy;
+            Enemy *e = state->enemies + i_enemy;
             if (!e->alive)
                 continue;
 
             // tower in range -> shoot
-            for (int i_tower = 0; i_tower < state.towerLen; ++i_tower)
+            for (int i_tower = 0; i_tower < state->towerLen; ++i_tower)
             {
-                Tower *t = state.towers + i_tower;
+                Tower *t = state->towers + i_tower;
                 if (frame - t->lastShot < t->cooldown)
                     continue;
                 if (!CheckCollisionCircles(e->pos, ENEMY_SIZE, t->center, t->range))
@@ -387,9 +473,9 @@ int main(void)
             }
 
             // touch home -> remove itself + health
-            if (CheckCollisionPointRec(e->pos, state.home.rect))
+            if (CheckCollisionPointRec(e->pos, state->home.rect))
             {
-                --state.home.health;
+                --state->home.health;
                 e->alive = false;
                 continue;
             }
@@ -409,20 +495,20 @@ int main(void)
             --s->shotLife;
         }
         // spawn new enemies
-        for (int i_queue = state.queueTail; i_queue != state.queueHead; ++i_queue)
+        for (int i_queue = state->queueTail; i_queue != state->queueHead; ++i_queue)
         {
-            EnemyQueue e = state.queue[i_queue % QUEUE_SIZE];
+            EnemyQueue e = state->queue[i_queue % QUEUE_SIZE];
             if (e.spawnFrame - frame < frame - e.spawnFrame)
                 break;
 
-            assert(state.enemiesLen < MAX_ENEMIES);
-            state.enemies[state.enemiesLen++] = (Enemy){
+            assert(state->enemiesLen < MAX_ENEMIES);
+            state->enemies[state->enemiesLen++] = (Enemy){
                 .pos = {screenWidth + 50, screenHeight / 2},
                 .speed = {-0.5, 0},
                 .health = e.health,
                 .alive = true,
             };
-            ++state.queueTail;
+            ++state->queueTail;
         }
 
         ++frame;
@@ -450,10 +536,10 @@ afterLogic:
         // Towers
         char text[64] = "";
         int textWidthPixels = 0;
-        for (int i = 0; i < state.towerLen; ++i) {
+        for (int i = 0; i < state->towerLen; ++i) {
             assert(currentType < ET_EOL);
 
-            Tower t = state.towers[i];
+            Tower t = state->towers[i];
             DrawRectangleRec(t.rect, DARKGRAY);
             snprintf(text, sizeof(text), SIGNS[t.type], t.scale);
             int fontSize = FONT_SIZE;
@@ -471,20 +557,20 @@ afterLogic:
         }
 
         // Home
-        DrawRectangleRec(state.home.rect, RED);
-        snprintf(text, sizeof(text), "%d", state.home.health);
+        DrawRectangleRec(state->home.rect, RED);
+        snprintf(text, sizeof(text), "%d", state->home.health);
         textWidthPixels = MeasureText(text, FONT_SIZE);
         DrawText(text, 
-            state.home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
-            state.home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
+            state->home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
+            state->home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
             FONT_SIZE,
             BLACK);
 
         // Enemies
         int aliveCount = 0;
-        for (int i = state.enemiesLen-1; i >= 0; --i)
+        for (int i = state->enemiesLen-1; i >= 0; --i)
         {
-            Enemy e = state.enemies[i];
+            Enemy e = state->enemies[i];
             if (!e.alive)
                 continue;
 
@@ -515,8 +601,8 @@ afterLogic:
             Vector2 varTarget = {rand() % 8 - 4, rand() % 8 - 4};
 
             DrawLineV(
-                Vector2Add(state.towers[s.tower].center, varTower), 
-                Vector2Add(state.enemies[s.target].pos, varTarget),
+                Vector2Add(state->towers[s.tower].center, varTower), 
+                Vector2Add(state->enemies[s.target].pos, varTarget),
                 RED);
         }
 
@@ -578,7 +664,7 @@ afterLogic:
             assert(count > 0);
             assert(spacing > 0);
 
-            state_addQueueFromString(&state, frame, healthText, count, spacing);
+            state_addQueueFromString(state, frame, healthText, count, spacing);
         }
 
         int xPos = 4;
@@ -611,13 +697,13 @@ afterLogic:
         snprintf(text, sizeof(text), "Frame: %u", frame);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Towers: %d / %d", state.towerLen, MAX_TOWERS);
+        snprintf(text, sizeof(text), "Towers: %d / %d", state->towerLen, MAX_TOWERS);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, state.enemiesLen, MAX_ENEMIES);
+        snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, state->enemiesLen, MAX_ENEMIES);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Queue: %d: %d -> %d", state.queueHead - state.queueTail, state.queueTail, state.queueHead);
+        snprintf(text, sizeof(text), "Queue: %d: %d -> %d", state->queueHead - state->queueTail, state->queueTail, state->queueHead);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
         snprintf(text, sizeof(text), "Shots: %d: %d -> %d", shotHead - shotTail, shotTail, shotHead);
@@ -635,8 +721,5 @@ afterLogic:
         EndDrawing();
     }
 
-    // De-Initialization
-    CloseWindow();
-
-    return 0;
+    free(shots);
 }
