@@ -132,6 +132,46 @@ void state_addTower(GameState *s, int tileX, int tileY, int type, int scale)
     };
 }
 
+// returns true if all entries were added
+bool state_addQueueFromString(GameState *s, unsigned int frame, const char *queue, unsigned int count, unsigned int spacing)
+{
+    unsigned int spawnFrame;
+    if (s->queueHead == s->queueTail) // queue is empty -> spawn immediately
+        spawnFrame = frame;
+    else
+        spawnFrame = s->queue[(s->queueHead - 1) % QUEUE_SIZE].spawnFrame + spacing;
+    while (count > 0)
+    {
+        char *buffer = strdup(queue);
+        char *prev = buffer;
+        char *pos = strtok(prev, ",;");
+        while (pos != NULL)
+        {
+            bool queueIsFull = (s->queueHead - s->queueTail >= QUEUE_SIZE);
+            if (queueIsFull)
+                return false;
+
+            float value = atof(pos);
+            if (value == 0 || !isfinite(value))
+                continue;
+
+            s->queue[s->queueHead % QUEUE_SIZE] = (EnemyQueue){
+                .spawnFrame = spawnFrame,
+                .health = atof(pos),
+            };
+            ++s->queueHead;
+            spawnFrame += spacing;
+            prev = pos;
+            pos = strtok(NULL, ",;");
+        }
+
+        free(buffer);
+        --count;
+    }
+
+    return true;
+}
+
 bool canTarget(EquationType tower, float enemy)
 {
     switch (tower)
@@ -538,40 +578,7 @@ afterLogic:
             assert(count > 0);
             assert(spacing > 0);
 
-            
-            unsigned int spawnFrame;
-            if (state.queueHead == state.queueTail) // queue is empty -> spawn immediately
-                spawnFrame = frame;
-            else
-                spawnFrame = state.queue[(state.queueHead - 1) % QUEUE_SIZE].spawnFrame + spacing;
-            while (count > 0)
-            {
-                char *buffer = strdup(healthText);
-                char *prev = buffer;
-                char *pos = strtok(prev, ",;");
-                while (pos != NULL)
-                {
-                    bool queueIsFull = (state.queueHead - state.queueTail >= QUEUE_SIZE);
-                    if (queueIsFull)
-                        break;
-
-                    float value = atof(pos);
-                    if (value == 0 || !isfinite(value))
-                        continue;
-
-                    state.queue[state.queueHead % QUEUE_SIZE] = (EnemyQueue){
-                        .spawnFrame = spawnFrame,
-                        .health = atof(pos),
-                    };
-                    ++state.queueHead;
-                    spawnFrame += spacing;
-                    prev = pos;
-                    pos = strtok(NULL, ",;");
-                }
-
-                free(buffer);
-                --count;
-            }
+            state_addQueueFromString(&state, frame, healthText, count, spacing);
         }
 
         int xPos = 4;
