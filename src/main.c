@@ -28,6 +28,12 @@ const char* SIGNS[ET_EOL] = {
     "none", "+%d", "-%d", "*%d", "/%d", "root()", "log_e()", "log_2()", "log_10"
 };
 
+typedef struct Home
+{
+    Rectangle rect;
+    int health;
+} Home;
+
 #define ENEMY_SIZE 20
 typedef struct Enemy
 {
@@ -36,6 +42,12 @@ typedef struct Enemy
     float health;
     bool alive;
 } Enemy;
+
+typedef struct EnemyQueue
+{
+    unsigned int spawnFrame;
+    float health;
+} EnemyQueue;
 
 #define SHOT_SIZE 4
 #define SHOT_LIFETIME 12
@@ -63,6 +75,62 @@ typedef struct Tower
     int enemiesShot[TOWER_LIST_SIZE];
     unsigned int shotIndex;
 } Tower;
+
+typedef struct GameState
+{
+    Home home;
+
+    Tower *towers;
+    unsigned int towerLen;
+
+    Enemy *enemies;
+    unsigned int enemiesLen;
+
+    EnemyQueue *queue;
+    unsigned int queueHead;
+    unsigned int queueTail;
+} GameState;
+
+#define MAX_TOWERS 32
+#define MAX_ENEMIES 1024
+#define QUEUE_SIZE 64
+void state_init(GameState *s)
+{
+    s->home = (Home){
+        .rect = {50, 200, TOWER_SIZE, TOWER_SIZE},
+        .health = 10,
+    };
+
+    s->towers = calloc(MAX_TOWERS, sizeof(s->towers[0]));
+    s->towerLen = 0;
+
+    s->enemies = calloc(MAX_ENEMIES, sizeof(s->enemies[0]));
+    s->enemiesLen = 0;
+
+    s->queue = calloc(QUEUE_SIZE, sizeof(s->queue[0]));
+    s->queueHead = 0;
+    s->queueTail = 0;
+}
+
+void state_reset(GameState *s)
+{
+    s->towerLen = 0;
+    s->home.health = 10;
+    s->enemiesLen = 0;
+    s->queueHead = s->queueTail = 0;
+}
+
+void state_addTower(GameState *s, int tileX, int tileY, int type, int scale)
+{
+    s->towers[s->towerLen++] = (Tower){
+        .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
+        .center = {(tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE},
+        .type = type,
+        .scale = scale,
+        .range = TOWER_RANGE,
+        .cooldown = 60,
+    };
+}
 
 bool canTarget(EquationType tower, float enemy)
 {
@@ -108,18 +176,6 @@ bool takeHealth(Enemy *e, Tower *t)
     }
     return true;
 }
-
-typedef struct Home
-{
-    Rectangle rect;
-    int health;
-} Home;
-
-typedef struct EnemyQueue
-{
-    unsigned int spawnFrame;
-    float health;
-} EnemyQueue;
 
 bool hasAlreadyTargeted(int *list, int len, int index)
 {
@@ -172,28 +228,17 @@ int main(void)
 
     unsigned int frame = -600; // test rollover robustness
 
-    const int MAX_TOWERS = 32;
-    Tower *towers = calloc(MAX_TOWERS, sizeof(towers[0]));
-    int towerLen = 0;
+    GameState state;
+    state_init(&state);
+    
+    Rectangle path = {100, 200, screenWidth - 100, TOWER_SIZE};
     int currentType = ET_SUB;
     int currentScale = 1;
-    Home home = (Home){
-        .rect = {50, 200, TOWER_SIZE, TOWER_SIZE},
-        .health = 10,
-    };
-    Rectangle path = {100, 200, screenWidth - 100, TOWER_SIZE};
 
-    const int MAX_ENEMIES = 1024;
-    Enemy *enemies = calloc(MAX_ENEMIES, sizeof(enemies[0]));
-    int enemiesLen = 0;
-
-    const int QUEUE_SIZE = 32;
-    EnemyQueue *queue = calloc(QUEUE_SIZE, sizeof(queue[0]));
-    unsigned int queueHead = 0;
-    unsigned int queueTail = 0;
-
-    const int MAX_SHOTS = 1024;
-    Shot *shots = calloc(MAX_SHOTS, sizeof(shots[0]));
+    // rolling buffer, we do not check for overwrites, so this has to be big enough
+    // Equal to max towers, because every tower can only shoot once simultaniously
+    const int MAX_SIMUL_SHOTS = MAX_TOWERS;
+    Shot *shots = calloc(MAX_SIMUL_SHOTS, sizeof(shots[0]));
     unsigned int shotHead = 0;
     unsigned int shotTail = 0;
 
@@ -229,11 +274,8 @@ int main(void)
 
         if (IsKeyPressed(KEY_R))
         {
-            towerLen = 0;
-            home.health = 10;
+            state_reset(&state);
             shotHead = shotTail = 0;
-            enemiesLen = 0;
-            queueHead = queueTail = 0;
         }
 
         int tileX = GetMouseX() / TOWER_SIZE;
@@ -249,23 +291,16 @@ int main(void)
             canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), queueButton);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), (Rectangle){0, 0, screenWidth, 30});
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), home.rect);
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state.home.rect);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
-            for (int i = 0; i < towerLen; ++i) {
-                canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), towers[i].rect);
+            for (int i = 0; i < state.towerLen; ++i) {
+                canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state.towers[i].rect);
             }
         }
 
-        if (IsMouseButtonPressed(0) && towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
+        if (IsMouseButtonPressed(0) && state.towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
         {
-            towers[towerLen++] = (Tower){
-                .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
-                .center = {(tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE},
-                .type = currentType,
-                .scale = currentScale,
-                .range = TOWER_RANGE,
-                .cooldown = 60,
-            };
+            state_addTower(&state, tileX, tileY, currentType, currentScale);
         }
 
         if (paused)
@@ -274,16 +309,16 @@ int main(void)
         }
 
         // ------------------ Logic ------------------
-        for (int i_enemy = 0; i_enemy < enemiesLen; ++i_enemy)
+        for (int i_enemy = 0; i_enemy < state.enemiesLen; ++i_enemy)
         {
-            Enemy *e = enemies + i_enemy;
+            Enemy *e = state.enemies + i_enemy;
             if (!e->alive)
                 continue;
 
             // tower in range -> shoot
-            for (int i_tower = 0; i_tower < towerLen; ++i_tower)
+            for (int i_tower = 0; i_tower < state.towerLen; ++i_tower)
             {
-                Tower *t = towers + i_tower;
+                Tower *t = state.towers + i_tower;
                 if (frame - t->lastShot < t->cooldown)
                     continue;
                 if (!CheckCollisionCircles(e->pos, ENEMY_SIZE, t->center, t->range))
@@ -293,7 +328,7 @@ int main(void)
                 if (hasAlreadyTargeted(t->enemiesShot, TOWER_LIST_SIZE, i_enemy+1))
                     continue;
 
-                shots[shotHead % MAX_SHOTS] = (Shot){
+                shots[shotHead % MAX_SIMUL_SHOTS] = (Shot){
                     .tower = i_tower,
                     .target = i_enemy, 
                     .type = t->type,
@@ -312,9 +347,9 @@ int main(void)
             }
 
             // touch home -> remove itself + health
-            if (CheckCollisionPointRec(e->pos, home.rect))
+            if (CheckCollisionPointRec(e->pos, state.home.rect))
             {
-                --home.health;
+                --state.home.health;
                 e->alive = false;
                 continue;
             }
@@ -323,7 +358,7 @@ int main(void)
         }
         for (int i_shot = shotTail; i_shot != shotHead; ++i_shot)
         {
-            Shot *s = shots + (i_shot % MAX_SHOTS);
+            Shot *s = shots + (i_shot % MAX_SIMUL_SHOTS);
 
             if (s->shotLife == 0)
             {
@@ -334,20 +369,20 @@ int main(void)
             --s->shotLife;
         }
         // spawn new enemies
-        for (int i_queue = queueTail; i_queue != queueHead; ++i_queue)
+        for (int i_queue = state.queueTail; i_queue != state.queueHead; ++i_queue)
         {
-            EnemyQueue e = queue[i_queue % QUEUE_SIZE];
+            EnemyQueue e = state.queue[i_queue % QUEUE_SIZE];
             if (e.spawnFrame - frame < frame - e.spawnFrame)
                 break;
 
-            assert(enemiesLen < MAX_ENEMIES);
-            enemies[enemiesLen++] = (Enemy){
+            assert(state.enemiesLen < MAX_ENEMIES);
+            state.enemies[state.enemiesLen++] = (Enemy){
                 .pos = {screenWidth + 50, screenHeight / 2},
                 .speed = {-0.5, 0},
                 .health = e.health,
                 .alive = true,
             };
-            ++queueTail;
+            ++state.queueTail;
         }
 
         ++frame;
@@ -375,10 +410,10 @@ afterLogic:
         // Towers
         char text[64] = "";
         int textWidthPixels = 0;
-        for (int i = 0; i < towerLen; ++i) {
+        for (int i = 0; i < state.towerLen; ++i) {
             assert(currentType < ET_EOL);
 
-            Tower t = towers[i];
+            Tower t = state.towers[i];
             DrawRectangleRec(t.rect, DARKGRAY);
             snprintf(text, sizeof(text), SIGNS[t.type], t.scale);
             int fontSize = FONT_SIZE;
@@ -396,20 +431,20 @@ afterLogic:
         }
 
         // Home
-        DrawRectangleRec(home.rect, RED);
-        snprintf(text, sizeof(text), "%d", home.health);
+        DrawRectangleRec(state.home.rect, RED);
+        snprintf(text, sizeof(text), "%d", state.home.health);
         textWidthPixels = MeasureText(text, FONT_SIZE);
         DrawText(text, 
-            home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
-            home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
+            state.home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
+            state.home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
             FONT_SIZE,
             BLACK);
 
         // Enemies
         int aliveCount = 0;
-        for (int i = enemiesLen-1; i >= 0; --i)
+        for (int i = state.enemiesLen-1; i >= 0; --i)
         {
-            Enemy e = enemies[i];
+            Enemy e = state.enemies[i];
             if (!e.alive)
                 continue;
 
@@ -434,14 +469,14 @@ afterLogic:
         // Shots
         for (int i = shotTail; i < shotHead; ++i)
         {
-            Shot s = shots[i % MAX_SHOTS];
+            Shot s = shots[i % MAX_SIMUL_SHOTS];
 
             Vector2 varTower = {rand() % 4 - 2, rand() % 4 - 2};
             Vector2 varTarget = {rand() % 8 - 4, rand() % 8 - 4};
 
             DrawLineV(
-                Vector2Add(towers[s.tower].center, varTower), 
-                Vector2Add(enemies[s.target].pos, varTarget),
+                Vector2Add(state.towers[s.tower].center, varTower), 
+                Vector2Add(state.enemies[s.target].pos, varTarget),
                 RED);
         }
 
@@ -505,10 +540,10 @@ afterLogic:
 
             
             unsigned int spawnFrame;
-            if (queueHead == queueTail) // queue is empty -> spawn immediately
+            if (state.queueHead == state.queueTail) // queue is empty -> spawn immediately
                 spawnFrame = frame;
             else
-                spawnFrame = queue[(queueHead - 1) % QUEUE_SIZE].spawnFrame + spacing;
+                spawnFrame = state.queue[(state.queueHead - 1) % QUEUE_SIZE].spawnFrame + spacing;
             while (count > 0)
             {
                 char *buffer = strdup(healthText);
@@ -516,7 +551,7 @@ afterLogic:
                 char *pos = strtok(prev, ",;");
                 while (pos != NULL)
                 {
-                    bool queueIsFull = (queueHead - queueTail >= QUEUE_SIZE);
+                    bool queueIsFull = (state.queueHead - state.queueTail >= QUEUE_SIZE);
                     if (queueIsFull)
                         break;
 
@@ -524,11 +559,11 @@ afterLogic:
                     if (value == 0 || !isfinite(value))
                         continue;
 
-                    queue[queueHead % QUEUE_SIZE] = (EnemyQueue){
+                    state.queue[state.queueHead % QUEUE_SIZE] = (EnemyQueue){
                         .spawnFrame = spawnFrame,
                         .health = atof(pos),
                     };
-                    ++queueHead;
+                    ++state.queueHead;
                     spawnFrame += spacing;
                     prev = pos;
                     pos = strtok(NULL, ",;");
@@ -569,13 +604,13 @@ afterLogic:
         snprintf(text, sizeof(text), "Frame: %u", frame);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Towers: %d / %d", towerLen, MAX_TOWERS);
+        snprintf(text, sizeof(text), "Towers: %d / %d", state.towerLen, MAX_TOWERS);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, enemiesLen, MAX_ENEMIES);
+        snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, state.enemiesLen, MAX_ENEMIES);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        snprintf(text, sizeof(text), "Queue: %d: %d -> %d", queueHead - queueTail, queueTail, queueHead);
+        snprintf(text, sizeof(text), "Queue: %d: %d -> %d", state.queueHead - state.queueTail, state.queueTail, state.queueHead);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
         snprintf(text, sizeof(text), "Shots: %d: %d -> %d", shotHead - shotTail, shotTail, shotHead);
