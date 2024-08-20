@@ -43,10 +43,11 @@ set INCLUDES=/I include /I src
 set SOURCES=src\main.c
 set LIBS=lib\raylib.lib
 set COMMON=/nologo /utf-8
-set DEFINES=/D UNICODE /D _UNICODE
 if "%debug%"=="1" (
+	set DEFINES=/D UNICODE /D _UNICODE /D _DEBUG
     set OPTIONS=/Zi /MD /Od
 ) else (
+	set DEFINES=/D UNICODE /D _UNICODE
     set OPTIONS=/O2
 )
 

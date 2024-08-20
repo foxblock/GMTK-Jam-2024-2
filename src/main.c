@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 #include <float.h>
+#include <limits.h>
 
 #include "raylib.h"
 #include "raymath.h"
@@ -28,12 +29,13 @@ typedef enum EquationType
     ET_EOL
 } EquationType;
 const char* SIGNS[ET_EOL] = {
-    "none", "+%d", "-%d", "*%d", "/%d", "x²", "sqrt()", "log_e()", "log_2()", "log_10"
+    "none", "+%d", "-%d", "*%d", "/%d", "x²", "sqrt()", "ln()", "log_2()", "log_10"
 };
 
 #define HEALTH_DEFAULT 10
 // TODO: Split this more sensibly into "LevelParams" struct or something
-typedef struct Home // also level parameters
+// also level parameters
+typedef struct Home 
 {
     Rectangle rect;
     int health;
@@ -87,6 +89,14 @@ typedef struct Tower
     unsigned int shotIndex;
 } Tower;
 
+#define SAVED_MSG_LIFETIME 60
+#define SAVED_MOVEY_PER_FRAME -0.2
+typedef struct SavedMessage
+{
+    Vector2 pos;
+    int frames;
+} SavedMessage;
+
 typedef struct GameState
 {
     Home home;
@@ -104,11 +114,15 @@ typedef struct GameState
     Shot *shots;
     unsigned int shotHead;
     unsigned int shotTail;
+
+    SavedMessage *msg;
+    unsigned int msgIndex;
 } GameState;
 
 #define MAX_TOWERS 32
 #define MAX_ENEMIES 1024
 #define QUEUE_SIZE 64
+#define SAVED_MSGS_MAX 32
 #define MAX_SIMUL_SHOTS MAX_TOWERS
 void state_init(GameState *s)
 {
@@ -133,6 +147,9 @@ void state_init(GameState *s)
     s->shots = calloc(MAX_SIMUL_SHOTS, sizeof(s->shots[0]));
     s->shotHead = 0;
     s->shotTail = 0;
+
+    s->msg = calloc(SAVED_MSGS_MAX, sizeof(SavedMessage));
+    s->msgIndex = 0;
 }
 
 void state_free(GameState *s)
@@ -141,6 +158,7 @@ void state_free(GameState *s)
     free(s->enemies);
     free(s->queue);
     free(s->shots);
+    free(s->msg);
 }
 
 void state_reset(GameState *s)
@@ -151,6 +169,7 @@ void state_reset(GameState *s)
     s->enemiesLen = 0;
     s->queueHead = s->queueTail = 0;
     s->shotHead = s->shotTail = 0;
+    s->msgIndex = 0;
 }
 
 void state_addTower(GameState *s, int tileX, int tileY, int type, int scale)
@@ -227,8 +246,15 @@ bool canTarget(EquationType tower, float enemy)
     return false;
 }
 
-// takes health and returns whether enemy is alive after hit
-bool takeHealth(Enemy *e, Tower *t, int rounding)
+typedef enum TakeHealthResult
+{
+    TH_DEAD,
+    TH_ALIVE,
+    TH_SAVED_BY_ROUNDING,
+} TakeHealthResult;
+
+// takes health and returns
+TakeHealthResult takeHealth(Enemy *e, Tower *t, int rounding)
 {
     switch (t->type)
     {
@@ -245,14 +271,19 @@ bool takeHealth(Enemy *e, Tower *t, int rounding)
             printf("ERROR: Type of tower unknown: %d\n", t->type);
             assert(false);
     }
+    float healthNotRounded = floorf(e->health * rounding) / rounding;
     e->health = roundf(e->health * rounding) / rounding;
 
     // check for =0 with 2 decimals
     if (fabs(e->health) < FLT_EPSILON)
     {
-        return false;
+        return TH_DEAD;
     }
-    return true;
+    if (fabs(healthNotRounded) < FLT_EPSILON)
+    {
+        return TH_SAVED_BY_ROUNDING;
+    }
+    return TH_ALIVE;
 }
 
 bool hasAlreadyTargeted(int *list, int len, int index)
@@ -374,6 +405,17 @@ const LevelDef LEVELS[] = {
         .roundingFactor = 1,
     },
     {
+        .name = "Glass half full",
+        .cat = LC_RATIONAL,
+        // 4,8,12,16
+        .health = "1.5,3.5,5.5,7.5",
+        .count = 4,
+        .spacing = QUEUE_SPACING_DEFAULT,
+        .towersAllowed = (1 << ET_NONE) | (1 << ET_ADD) | (1 << ET_SUB) | (1 << ET_MULT) | (1 << ET_DIV),
+        .minSolution = 8, // [*2], [+1], [/2] * 2, [-1] * 4
+        .roundingFactor = 10,
+    },
+    {
         .name = "Primer time",
         .cat = LC_RATIONAL,
         .health = "2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131",
@@ -384,7 +426,7 @@ const LevelDef LEVELS[] = {
         .roundingFactor = 10,
     },
     {
-        .name = "Potential",
+        .name = "Built to scale",
         .cat = LC_RATIONAL,
         .health = "1,10,100,1e4,1e5,1e6,1e7,1e8,1e9,1e10",
         .count = 2,
@@ -394,14 +436,24 @@ const LevelDef LEVELS[] = {
         .roundingFactor = 10,
     },
     {
-        .name = "Plus / minus",
+        .name = "Broken Countdown",
         .cat = LC_RATIONAL,
-        .health = "1,-2,3,-4,5,-6,7,-8,9,-10,11,-12,13,-14,15,-16,17,-18,19,-20,21,-22,23,-24,25,-26,27,-28,29,-30,31,-32",
+        .health = "32,-31,30,-29,28,-27,26,-25,24,-23,22,-21,20,-19,18,-17,16,-15,14,-13,12,-11,10,-9,8,-7,6,-5,4,-3,2,-1",
         .count = 1,
         .spacing = QUEUE_SPACING_DEFAULT,
         .towersAllowed = (1 << ET_NONE) | (1 << ET_ADD) | (1 << ET_SUB) | (1 << ET_MULT) | (1 << ET_DIV) | (1 << ET_SQR) | (1 << ET_SQRT) | (1 << ET_LOG_10),
         .minSolution = 9, // [²], [log_10], [+1], [sqrt]*5, [-1]
         .roundingFactor = 10,
+    },
+    {
+        .name = "My little brother",
+        .cat = LC_REAL,
+        .health = "1,0.1,0.01",
+        .count = 5,
+        .spacing = QUEUE_SPACING_DEFAULT,
+        .towersAllowed = (1 << ET_NONE) | (1 << ET_ADD) | (1 << ET_MULT) | (1 << ET_DIV) | (1 << ET_SQR) | (1 << ET_SQRT) | (1 << ET_LOG_10),
+        .minSolution = 3, // [log_10], [+1] * 2 // [sqr] * 2, [log_10]
+        .roundingFactor = 100,
     },
 };
 
@@ -460,7 +512,7 @@ void level_draw(GameState *state);
 
 int main(void)
 {
-    InitWindow(screenWidth, screenHeight, "Scale TD");
+    InitWindow(screenWidth, screenHeight, "A puzzling tower defense game for beautiful math nerds.");
 
     SetTargetFPS(60);
     SetExitKey(0); // disable close on ESC
@@ -494,6 +546,8 @@ int main(void)
                 break;
             case SC_PLAYGROUND:
                 state_reset(&state);
+                state.home.allowedTowers = -1;
+                state.home.roundingFactor = 100;
                 playground(&state);
                 break;
             case SC_EXIT:
@@ -516,6 +570,12 @@ int main(void)
 void menu(void)
 {
     bool sceneChange = false;
+    float health[] = {1e7, 0.25, -3};
+    Vector2 pos[ARRAY_SIZE(health)] = {
+        { screenWidth / 2 - 100, 210 },
+        { screenWidth / 2, 210 },
+        { screenWidth / 2 + 100, 210 },
+    };
 
     // Main game loop
     while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
@@ -528,6 +588,23 @@ void menu(void)
         DrawText("A puzzling tower defense game", (screenWidth - textW) / 2, 40, 40, BLACK);
         textW = MeasureText("for beautiful math nerds.", 40);
         DrawText("for beautiful math nerds.", (screenWidth - textW) / 2, 90, 40, BLACK);
+        char text[32] = "";
+        
+        for (int i = 0; i < ARRAY_SIZE(health); ++i)
+        {
+            DrawCircleV(pos[i], ENEMY_SIZE * 2, enemyColor(health[i]));
+            // %g is confusing. the precision option seems to specify the max total number of
+            // significant digits (%.3g of 10.555 prints 10.6, while 0.555 prints 0.555).
+            // Sometimes it will round, sometimes it won't (%.3g of 1.555 prints 1.55).
+            snprintf(text, sizeof(text), "%.*g", 3, health[i]);
+            int fontSize = FONT_SIZE;
+            textW = MeasureText(text, fontSize);
+            DrawText(text, 
+                pos[i].x - textW / 2,
+                pos[i].y - fontSize / 2,
+                fontSize,
+                BLACK);
+        }
 
         int yPos = 300;
         if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Tutorial"))
@@ -554,6 +631,9 @@ void menu(void)
             sceneChange = true;
         }
         yPos += 32;
+
+        DrawText("Built with raylib", GUI_SPACING, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
+        DrawText("Game by Janek", screenWidth - 156, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
 
         GuiUnlock();
 
@@ -594,7 +674,7 @@ void tutorial(void)
         yPos += FONT_SIZE + spacing;
         DrawText("- Health can go negative, only 0 is death.", 16, yPos, FONT_SIZE, BLACK);
         yPos += FONT_SIZE + spacing;
-        DrawText("- The towers function is applied to the enemies health on shot.", 16, yPos, FONT_SIZE, BLACK);
+        DrawText("- Towers are mathematical functions which are applied on hit.", 16, yPos, FONT_SIZE, BLACK);
         yPos += FONT_SIZE + spacing;
         DrawText("- Towers shoot each enemy only once.", 16, yPos, FONT_SIZE, BLACK);
         yPos += FONT_SIZE + spacing;
@@ -602,7 +682,9 @@ void tutorial(void)
         yPos += FONT_SIZE + spacing;
         DrawText("(i.e. sqrt() towers cannot target negative health enemies)", 40, yPos, FONT_SIZE, BLACK);
         yPos += FONT_SIZE + spacing;
-        DrawText("- Towers cannot be sold/deleted, but pressing R will reset the level.", 16, yPos, FONT_SIZE, BLACK);
+        DrawText("- Towers cannot be sold/deleted, but pressing R will restart the level.", 16, yPos, FONT_SIZE, BLACK);
+        yPos += FONT_SIZE + spacing;
+        DrawText("- Space pauses.", 16, yPos, FONT_SIZE, BLACK);
         yPos += FONT_SIZE + spacing;
         DrawText("- Gold stars are awarded for:", 16, yPos, FONT_SIZE, BLACK);
         yPos += FONT_SIZE + spacing;
@@ -611,6 +693,8 @@ void tutorial(void)
         DrawText("- not losing health", 40, yPos, FONT_SIZE, BLACK);
         yPos += FONT_SIZE + spacing;
         DrawText("- placing the least amount of towers possible", 40, yPos, FONT_SIZE, BLACK);
+        yPos += FONT_SIZE + spacing * 3;
+        DrawText("THANKS FOR PLAYING", 16, yPos, FONT_SIZE, BLACK);
 
         if (GuiButton((Rectangle){screenWidth - 124, screenHeight - 28, 120, 24}, "Got it!"))
         {
@@ -686,6 +770,10 @@ void level_select(GameState *state)
             }
             xPos += 200 + GUI_SPACING;
         }
+        yPos += 24 + GUI_SPACING * 2;
+        DrawText("Complex numbers C", 16, yPos, FONT_SIZE, BLACK);
+        DrawText("Just kidding, maybe later...", 16, yPos + FONT_SIZE + GUI_SPACING, FONT_SIZE / 2, BLACK);
+
 
         GuiSetState(STATE_NORMAL);
         if (GuiButton((Rectangle){screenWidth - 124, screenHeight - 28, 120, 24}, "Back"))
@@ -939,25 +1027,32 @@ void level(GameState *state)
             }
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
+
+        snprintf(text, sizeof(text), "Par: %d", state->home.minTowers);
+        DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE * 2 - GUI_SPACING * 2, FONT_SIZE, BLACK);
+        snprintf(text, sizeof(text), "Precision: %.3g", 1 / (float)state->home.roundingFactor);
+        DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
         
-        // yPos = 4;
-        // snprintf(text, sizeof(text), "Frame: %u", frame);
-        // DrawText(text, 4, yPos, FONT_SIZE, BLACK);
-        // yPos += 24;
-        // snprintf(text, sizeof(text), "Towers: %d / %d", state->towerLen, MAX_TOWERS);
-        // DrawText(text, 4, yPos, FONT_SIZE, BLACK);
-        // yPos += 24;
-        // snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, state->enemiesLen, MAX_ENEMIES);
-        // DrawText(text, 4, yPos, FONT_SIZE, BLACK);
-        // yPos += 24;
-        // snprintf(text, sizeof(text), "Queue: %d: %d -> %d", 
-        //     state->queueHead - state->queueTail, state->queueTail, state->queueHead);
-        // DrawText(text, 4, yPos, FONT_SIZE, BLACK);
-        // yPos += 24;
-        // snprintf(text, sizeof(text), "Shots: %d: %d -> %d", 
-        //     state->shotHead - state->shotTail, state->shotTail, state->shotHead);
-        // DrawText(text, 4, yPos, FONT_SIZE, BLACK);
-        // yPos += 24;
+    #ifdef _DEBUG
+        yPos = 4;
+        snprintf(text, sizeof(text), "Frame: %u", frame);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
+        yPos += 24;
+        snprintf(text, sizeof(text), "Towers: %d / %d", state->towerLen, MAX_TOWERS);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
+        yPos += 24;
+        snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, state->enemiesLen, MAX_ENEMIES);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
+        yPos += 24;
+        snprintf(text, sizeof(text), "Queue: %d: %d -> %d", 
+            state->queueHead - state->queueTail, state->queueTail, state->queueHead);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
+        yPos += 24;
+        snprintf(text, sizeof(text), "Shots: %d: %d -> %d", 
+            state->shotHead - state->shotTail, state->shotTail, state->shotHead);
+        DrawText(text, 4, yPos, FONT_SIZE, BLACK);
+        yPos += 24;
+    #endif
 
         GuiUnlock();
 
@@ -1031,9 +1126,20 @@ void level_logic(GameState *state, unsigned int frame)
             t->enemiesShot[t->shotIndex % TOWER_LIST_SIZE] = (i_enemy + 1);
             t->shotIndex++;
 
-            if (!takeHealth(e, t, state->home.roundingFactor))
+            int res = takeHealth(e, t, state->home.roundingFactor);
+
+            switch (res)
             {
-                e->alive = false;
+                case TH_DEAD:
+                    e->alive = false;
+                    break;
+                case TH_SAVED_BY_ROUNDING:
+                    state->msg[state->msgIndex++ % SAVED_MSGS_MAX] = (SavedMessage){
+                        .pos = { e->pos.x - 30, e->pos.y - ENEMY_SIZE - GUI_SPACING },
+                        .frames = SAVED_MSG_LIFETIME,
+                    };
+                    printf("Saved by rounding\n");
+                    break;
             }
         }
 
@@ -1076,6 +1182,12 @@ void level_logic(GameState *state, unsigned int frame)
         };
         ++state->queueTail;
     }
+    // advance save msg
+    for (int i = 0; i < SAVED_MSGS_MAX; ++i)
+    {
+        state->msg[i].frames -= 1;
+        state->msg[i].pos.y += SAVED_MOVEY_PER_FRAME;
+    }
 }
 
 void level_draw(GameState *state)
@@ -1112,6 +1224,10 @@ void level_draw(GameState *state)
         FONT_SIZE,
         BLACK);
 
+    int roundingDigits = (int)log10(state->home.roundingFactor) + 1;
+    if (roundingDigits < 3) // to avoid 1e1 draw on 10
+        roundingDigits = 3;
+
     // Enemies
     for (int i = state->enemiesLen-1; i >= 0; --i)
     {
@@ -1123,7 +1239,7 @@ void level_draw(GameState *state)
         // %g is confusing. the precision option seems to specify the max total number of
         // significant digits (%.3g of 10.555 prints 10.6, while 0.555 prints 0.555).
         // Sometimes it will round, sometimes it won't (%.3g of 1.555 prints 1.55).
-        snprintf(text, sizeof(text), "%.3g", e.health);
+        snprintf(text, sizeof(text), "%.*g", roundingDigits, e.health);
         int fontSize = FONT_SIZE;
         textWidthPixels = MeasureText(text, fontSize);
         while (textWidthPixels > ENEMY_SIZE && fontSize > MIN_FONT_SIZE)
@@ -1136,6 +1252,7 @@ void level_draw(GameState *state)
             e.pos.y - fontSize / 2,
             fontSize,
             BLACK);
+    #ifdef _DEBUG
         snprintf(text, sizeof(text), "%.4f", e.health);
         textWidthPixels = MeasureText(text, 10);
         DrawText(text, 
@@ -1143,6 +1260,7 @@ void level_draw(GameState *state)
             e.pos.y + fontSize / 2,
             10,
             BLACK);
+    #endif
     }
 
     // Shots
@@ -1157,6 +1275,16 @@ void level_draw(GameState *state)
             Vector2Add(state->towers[s.tower].center, varTower), 
             Vector2Add(state->enemies[s.target].pos, varTarget),
             RED);
+    }
+
+    // Saved messages
+    for (int i = 0; i < SAVED_MSGS_MAX; ++i)
+    {
+        if (state->msg[i].frames <= 0)
+            continue;
+
+        DrawText("Saved by\nRounding", state->msg[i].pos.x, state->msg[i].pos.y, FONT_SIZE / 2, 
+            (state->msg[i].frames % 4) < 2 ? RED : BLACK);
     }
 }
 
@@ -1392,7 +1520,30 @@ void playground(GameState *state)
             }
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
+        if (GuiButton((Rectangle){xPos, yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
+            GuiIconText(ICON_ARROW_LEFT, NULL)))
+        {
+            if (state->home.roundingFactor > 1)
+            {
+                state->home.roundingFactor /= 10;
+            }
+        }
+        if (GuiButton((Rectangle){xPos + (BUTTON_SIZE + GUI_SPACING) / 2, yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
+            GuiIconText(ICON_ARROW_RIGHT, NULL)))
+        {
+            if (state->home.roundingFactor < 1e8)
+            {
+                state->home.roundingFactor *= 10;
+            }
+        }
+        xPos += BUTTON_SIZE + GUI_SPACING * 2;
+        if (state->home.roundingFactor == 1)
+            snprintf(text, sizeof(text), "Rounding: %d", 1);
+        else
+            snprintf(text, sizeof(text), "Rounding: %.*f", (int)log10(state->home.roundingFactor), 1 + 1 / (float)state->home.roundingFactor);
+        DrawText(text, xPos, yPos + (BUTTON_SIZE - FONT_SIZE) / 2, FONT_SIZE, BLACK);
 
+    #ifdef _DEBUG
         yPos = 4;
         snprintf(text, sizeof(text), "Frame: %u", frame);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
@@ -1421,6 +1572,7 @@ void playground(GameState *state)
         yPos += 24;
 
         DrawFPS(screenWidth - 80, 0);
+    #endif
 
         GuiUnlock();
         EndDrawing();
