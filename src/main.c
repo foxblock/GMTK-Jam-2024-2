@@ -12,6 +12,7 @@
 #undef RAYGUI_IMPLEMENTATION
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+#define MIN(a, b) ((a)<(b)? (a) : (b))
 
 typedef enum EquationType 
 {
@@ -500,6 +501,8 @@ const int screenWidth = 800;
 const int screenHeight = 450;
 Scene scene;
 Savegame save;
+RenderTexture2D screen;
+float scale = 1.0f;
 
 void menu(void);
 void tutorial(void);
@@ -512,10 +515,17 @@ void level_draw(GameState *state);
 
 int main(void)
 {
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     InitWindow(screenWidth, screenHeight, "A puzzling tower defense game for beautiful math nerds.");
+    SetWindowMinSize(screenWidth, screenHeight);
 
     SetTargetFPS(60);
     SetExitKey(0); // disable close on ESC
+    
+    // Render texture initialization, used to hold the rendering result so we can easily resize it
+    screen = LoadRenderTexture(screenWidth, screenHeight);
+    assert(screen.id != 0);
+    SetTextureFilter(screen.texture, TEXTURE_FILTER_BILINEAR);  // Texture scale filter to use
 
     load_progress(&save, SAVE_FILE);
 
@@ -561,10 +571,37 @@ int main(void)
 
     state_free(&state);
 
+    UnloadRenderTexture(screen);
+
     // De-Initialization
     CloseWindow();
 
     return 0;
+}
+
+void UpdateGlobalScaling() 
+{
+    if (!IsWindowResized())
+        return;
+
+    scale = MIN((float)GetScreenWidth()/screenWidth, (float)GetScreenHeight()/screenHeight);
+
+    SetMouseOffset(-(GetScreenWidth() - (screenWidth*scale))*0.5f, -(GetScreenHeight() - (screenHeight*scale))*0.5f);
+    SetMouseScale(1/scale, 1/scale);
+}
+
+void DrawScreenScaled()
+{
+    BeginDrawing();
+
+    ClearBackground(BLACK);     // Clear screen background
+
+    // Draw render texture to screen, properly scaled
+    DrawTexturePro(screen.texture, (Rectangle){ 0.0f, 0.0f, (float)screenWidth, (float)-screenHeight },
+                    (Rectangle){ (GetScreenWidth() - ((float)screenWidth*scale))*0.5f, (GetScreenHeight() - ((float)screenHeight*scale))*0.5f,
+                    (float)screenWidth*scale, (float)screenHeight*scale }, (Vector2){ 0, 0 }, 0.0f, WHITE);
+
+    EndDrawing();
 }
 
 void menu(void)
@@ -580,7 +617,10 @@ void menu(void)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
     {
-        BeginDrawing();
+        UpdateGlobalScaling();
+
+        // Draw onto texture unscaled
+        BeginTextureMode(screen);
 
         ClearBackground(LIGHTGRAY);
 
@@ -637,7 +677,9 @@ void menu(void)
 
         GuiUnlock();
 
-        EndDrawing();
+        EndTextureMode();
+
+        DrawScreenScaled();
     }
 }
 
@@ -657,6 +699,8 @@ void tutorial(void)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
     {
+        UpdateGlobalScaling();
+
         if (IsKeyPressed(KEY_ESCAPE))
         {
             scene = SC_MENU;
@@ -664,7 +708,7 @@ void tutorial(void)
             break;
         }
 
-        BeginDrawing();
+        BeginTextureMode(screen);
 
         ClearBackground(LIGHTGRAY);
 
@@ -704,7 +748,9 @@ void tutorial(void)
 
         GuiUnlock();
 
-        EndDrawing();
+        EndTextureMode();
+
+        DrawScreenScaled();
     }
 }
 
@@ -717,6 +763,8 @@ void level_select(GameState *state)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
     {
+        UpdateGlobalScaling();
+
         if (IsKeyPressed(KEY_ESCAPE))
         {
             scene = SC_MENU;
@@ -724,7 +772,7 @@ void level_select(GameState *state)
             break;
         }
 
-        BeginDrawing();
+        BeginTextureMode(screen);
 
         ClearBackground(LIGHTGRAY);
 
@@ -791,7 +839,9 @@ void level_select(GameState *state)
 
         GuiUnlock();
 
-        EndDrawing();
+        EndTextureMode();
+
+        DrawScreenScaled();
     }
 }
 
@@ -827,6 +877,8 @@ void level(GameState *state)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
     {
+        UpdateGlobalScaling();
+
         // ------------------ Input ------------------
         if (IsKeyPressed(KEY_ESCAPE))
         {
@@ -918,7 +970,7 @@ void level(GameState *state)
         }
 
         // ------------------ Draw ------------------
-        BeginDrawing();
+        BeginTextureMode(screen);
 
         ClearBackground(LIGHTGRAY);
 
@@ -1089,7 +1141,9 @@ void level(GameState *state)
             }
         }
 
-        EndDrawing();
+        EndTextureMode();
+
+        DrawScreenScaled();
     }
 }
 
@@ -1319,6 +1373,8 @@ void playground(GameState *state)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
     {
+        UpdateGlobalScaling();
+
         // ------------------ Input ------------------
         if (IsKeyPressed(KEY_ESCAPE))
         {
@@ -1383,7 +1439,7 @@ void playground(GameState *state)
         }
 
         // ------------------ Draw ------------------
-        BeginDrawing();
+        BeginTextureMode(screen);
 
         ClearBackground(LIGHTGRAY);
 
@@ -1575,6 +1631,8 @@ void playground(GameState *state)
     #endif
 
         GuiUnlock();
-        EndDrawing();
+        EndTextureMode();
+
+        DrawScreenScaled();
     }
 }
