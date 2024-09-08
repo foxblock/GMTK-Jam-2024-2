@@ -26,17 +26,33 @@ typedef enum EquationType
     ET_LOG_E,
     ET_LOG_2,
     ET_LOG_10,
+    ET_ROUND,
+    ET_SIN,
+    ET_COS,
+    ET_TAN,
 
     ET_EOL
 } EquationType;
 const char* SIGNS[ET_EOL] = {
-    "none", "+%d", "-%d", "*%d", "/%d", "x²", "sqrt()", "ln()", "log_2()", "log_10"
+    "none",
+    "+%d",
+    "-%d",
+    "*%d",
+    "/%d",
+    "x²",
+    "sqrt()",
+    "ln()",
+    "log_2()",
+    "log_10",
+    "round\n%.*f",
+    "sin",
+    "cos",
+    "tan",
 };
 
 #define HEALTH_DEFAULT 10
 // TODO: Split this more sensibly into "LevelParams" struct or something
-// also level parameters
-typedef struct Home 
+typedef struct Home // also level parameters
 {
     Rectangle rect;
     int health;
@@ -225,7 +241,7 @@ bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char 
     return true;
 }
 
-bool canTarget(EquationType tower, float enemy)
+bool canTarget(EquationType tower, float health)
 {
     switch (tower)
     {
@@ -234,12 +250,19 @@ bool canTarget(EquationType tower, float enemy)
         case ET_MULT:
         case ET_DIV:
         case ET_SQR:
+        case ET_ROUND:
+        case ET_SIN:
+        case ET_COS:
             return true;
         case ET_SQRT:
         case ET_LOG_E:
         case ET_LOG_2:
         case ET_LOG_10:
-            return enemy > 0;
+            return health > 0;
+        case ET_TAN:
+            if (health - (int)health < FLT_EPSILON)
+                return true;
+            return (int)health % 45 != 0;
         default:
             printf("ERROR: Type of tower unknown: %d\n", tower);
             assert(false); // always assert
@@ -268,19 +291,23 @@ TakeHealthResult takeHealth(Enemy *e, Tower *t, int rounding)
         case ET_LOG_E: e->health = logf(e->health); break;
         case ET_LOG_2: e->health = log2f(e->health); break;
         case ET_LOG_10: e->health = log10f(e->health); break;
+        case ET_ROUND: e->health = roundf(e->health * powf(10, t->scale - 1)) / powf(10, t->scale - 1); break;
         default:
             printf("ERROR: Type of tower unknown: %d\n", t->type);
             assert(false);
     }
-    float healthNotRounded = floorf(e->health * rounding) / rounding;
-    e->health = roundf(e->health * rounding) / rounding;
+    float healthNotRounded = 0;
+    if (rounding > 0)
+    {
+        healthNotRounded = floorf(e->health * rounding) / rounding;
+        e->health = roundf(e->health * rounding) / rounding;
+    }
 
-    // check for =0 with 2 decimals
     if (fabs(e->health) < FLT_EPSILON)
     {
         return TH_DEAD;
     }
-    if (fabs(healthNotRounded) < FLT_EPSILON)
+    if (rounding > 0 && fabs(healthNotRounded) < FLT_EPSILON)
     {
         return TH_SAVED_BY_ROUNDING;
     }
@@ -515,7 +542,7 @@ void level_draw(GameState *state);
 
 int main(void)
 {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
     InitWindow(screenWidth, screenHeight, "A puzzling tower defense game for beautiful math nerds.");
     SetWindowMinSize(screenWidth, screenHeight);
 
@@ -1082,7 +1109,7 @@ void level(GameState *state)
 
         snprintf(text, sizeof(text), "Par: %d", state->home.minTowers);
         DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE * 2 - GUI_SPACING * 2, FONT_SIZE, BLACK);
-        snprintf(text, sizeof(text), "Precision: %.3g", 1 / (float)state->home.roundingFactor);
+        snprintf(text, sizeof(text), "Precision: %.*f", (int)log10f(state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
         DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
         
     #ifdef _DEBUG
@@ -1278,9 +1305,13 @@ void level_draw(GameState *state)
         FONT_SIZE,
         BLACK);
 
-    int roundingDigits = (int)log10(state->home.roundingFactor) + 1;
-    if (roundingDigits < 3) // to avoid 1e1 draw on 10
-        roundingDigits = 3;
+    int roundingDigits = 0;
+    if (state->home.roundingFactor > 0)
+    {
+        roundingDigits = (int)log10(state->home.roundingFactor) + 1;
+        if (roundingDigits < 3) // to avoid 1e1 draw on 10
+            roundingDigits = 3;
+    }
 
     // Enemies
     for (int i = state->enemiesLen-1; i >= 0; --i)
@@ -1293,7 +1324,10 @@ void level_draw(GameState *state)
         // %g is confusing. the precision option seems to specify the max total number of
         // significant digits (%.3g of 10.555 prints 10.6, while 0.555 prints 0.555).
         // Sometimes it will round, sometimes it won't (%.3g of 1.555 prints 1.55).
-        snprintf(text, sizeof(text), "%.*g", roundingDigits, e.health);
+        if (roundingDigits > 0)
+            snprintf(text, sizeof(text), "%.*g", roundingDigits, e.health);
+        else
+            snprintf(text, sizeof(text), "%f", e.health);
         int fontSize = FONT_SIZE;
         textWidthPixels = MeasureText(text, fontSize);
         while (textWidthPixels > ENEMY_SIZE && fontSize > MIN_FONT_SIZE)
@@ -1356,7 +1390,8 @@ void playground(GameState *state)
     int currentType = ET_SUB;
     int currentScale = 1;
 
-    Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING * 2, screenWidth, BUTTON_SIZE + GUI_SPACING * 2};
+    Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING*2, screenWidth, BUTTON_SIZE + GUI_SPACING*2};
+    Rectangle guiAreaTop = {0, 0, screenWidth, TOWER_SIZE + 1};
     Rectangle countBox = {screenWidth - 124, 32, 120, 24};
     char countText[16] = "1";
     Rectangle healthBox = {screenWidth - 124, 60, 120, 24};
@@ -1410,13 +1445,16 @@ void playground(GameState *state)
             paused = !paused;
         }
 
+        // TODO: Optimize this / make a sane version of this check
         if (canPlaceTower)
         {
             canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), queueButton);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), (Rectangle){0, 0, screenWidth, 30});
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiAreaTop);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->home.rect);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
+            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), 
+                CLITERAL(Rectangle){0, screenHeight - BUTTON_SIZE*2 - GUI_SPACING*3, BUTTON_SIZE + GUI_SPACING*2, BUTTON_SIZE + GUI_SPACING*2});
             for (int i = 0; i < state->towerLen; ++i) {
                 canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->towers[i].rect);
             }
@@ -1567,7 +1605,11 @@ void playground(GameState *state)
             if ((state->home.allowedTowers & 1 << i) == 0)
                 continue;
 
-            snprintf(text, sizeof(text), SIGNS[i], currentScale);
+            // FIXME: The button text only updates when active
+            if (currentType == ET_ROUND)
+                snprintf(text, sizeof(text), SIGNS[i], currentScale - 1, 1.0f / powf(10, currentScale - 1));
+            else
+                snprintf(text, sizeof(text), SIGNS[i], currentScale);
             bool active = currentType == i;
             GuiToggle((Rectangle){ xPos, yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
             if (active)
@@ -1576,6 +1618,8 @@ void playground(GameState *state)
             }
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
+        xPos = 4;
+        yPos -= BUTTON_SIZE + GUI_SPACING;
         if (GuiButton((Rectangle){xPos, yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
             GuiIconText(ICON_ARROW_LEFT, NULL)))
         {
@@ -1583,20 +1627,28 @@ void playground(GameState *state)
             {
                 state->home.roundingFactor /= 10;
             }
+            else if (state->home.roundingFactor == 1)
+            {
+                state->home.roundingFactor = 0;
+            }
         }
         if (GuiButton((Rectangle){xPos + (BUTTON_SIZE + GUI_SPACING) / 2, yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
             GuiIconText(ICON_ARROW_RIGHT, NULL)))
         {
-            if (state->home.roundingFactor < 1e8)
+            if (state->home.roundingFactor == 0)
+            {
+                state->home.roundingFactor = 1;
+            }
+            else if (state->home.roundingFactor < 1e8)
             {
                 state->home.roundingFactor *= 10;
             }
         }
         xPos += BUTTON_SIZE + GUI_SPACING * 2;
-        if (state->home.roundingFactor == 1)
-            snprintf(text, sizeof(text), "Rounding: %d", 1);
+        if (state->home.roundingFactor == 0)
+            snprintf(text, sizeof(text), "Precision: full float");
         else
-            snprintf(text, sizeof(text), "Rounding: %.*f", (int)log10(state->home.roundingFactor), 1 + 1 / (float)state->home.roundingFactor);
+            snprintf(text, sizeof(text), "Precision: %.*f", (int)log10f(state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
         DrawText(text, xPos, yPos + (BUTTON_SIZE - FONT_SIZE) / 2, FONT_SIZE, BLACK);
 
     #ifdef _DEBUG
