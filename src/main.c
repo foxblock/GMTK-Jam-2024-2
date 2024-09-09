@@ -611,9 +611,6 @@ int main(void)
 
 void UpdateGlobalScaling() 
 {
-    if (!IsWindowResized())
-        return;
-
     scale = MIN((float)GetScreenWidth()/screenWidth, (float)GetScreenHeight()/screenHeight);
 
     SetMouseOffset(-(GetScreenWidth() - (screenWidth*scale))*0.5f, -(GetScreenHeight() - (screenHeight*scale))*0.5f);
@@ -639,15 +636,16 @@ void menu(void)
     bool sceneChange = false;
     float health[] = {1e7, 0.25, -3};
     Vector2 pos[ARRAY_SIZE(health)] = {
-        { screenWidth / 2 - 100, 210 },
-        { screenWidth / 2, 210 },
-        { screenWidth / 2 + 100, 210 },
+        { screenWidth / 2 - 100, 190 },
+        { screenWidth / 2, 190 },
+        { screenWidth / 2 + 100, 190 },
     };
 
     // Main game loop
     while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
     {
-        UpdateGlobalScaling();
+        if (IsWindowResized())
+            UpdateGlobalScaling();
 
         // Draw onto texture unscaled
         BeginTextureMode(screen);
@@ -676,7 +674,7 @@ void menu(void)
                 BLACK);
         }
 
-        int yPos = 300;
+        int yPos = 260;
         if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Tutorial"))
         {
             scene = SC_TURORIAL;
@@ -693,6 +691,25 @@ void menu(void)
         {
             scene = SC_PLAYGROUND;
             sceneChange = true;
+        }
+        yPos += 32;
+        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 96, 24}, "Size 1x"))
+        {
+            int w = GetScreenWidth();
+            int h = GetScreenHeight();
+            Vector2 pos = GetWindowPosition();
+            SetWindowSize(screenWidth, screenHeight);
+            SetWindowPosition(pos.x + (w - screenWidth) / 2, pos.y + (h - screenHeight) / 2);
+            UpdateGlobalScaling();
+        }
+        if (GuiButton((Rectangle){screenWidth / 2 + 4, yPos, 96, 24}, "Size 2x"))
+        {
+            int w = GetScreenWidth();
+            int h = GetScreenHeight();
+            Vector2 pos = GetWindowPosition();
+            SetWindowSize(screenWidth * 2, screenHeight * 2);
+            SetWindowPosition(pos.x + (w - screenWidth*2) / 2, pos.y + (h - screenHeight*2) / 2);
+            UpdateGlobalScaling();
         }
         yPos += 32;
         if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Exit"))
@@ -729,7 +746,8 @@ void tutorial(void)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
     {
-        UpdateGlobalScaling();
+        if (IsWindowResized())
+            UpdateGlobalScaling();
 
         if (IsKeyPressed(KEY_ESCAPE))
         {
@@ -793,7 +811,8 @@ void level_select(GameState *state)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange) // Detect window close button or ESC key
     {
-        UpdateGlobalScaling();
+        if (IsWindowResized())
+            UpdateGlobalScaling();
 
         if (IsKeyPressed(KEY_ESCAPE))
         {
@@ -907,7 +926,8 @@ void level(GameState *state)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
     {
-        UpdateGlobalScaling();
+        if (IsWindowResized())
+            UpdateGlobalScaling();
 
         // ------------------ Input ------------------
         if (IsKeyPressed(KEY_ESCAPE))
@@ -1411,7 +1431,8 @@ void playground(GameState *state)
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
     {
-        UpdateGlobalScaling();
+        if (IsWindowResized())
+            UpdateGlobalScaling();
 
         // ------------------ Input ------------------
         if (IsKeyPressed(KEY_ESCAPE))
