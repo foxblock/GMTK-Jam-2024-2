@@ -12,7 +12,7 @@
 #undef RAYGUI_IMPLEMENTATION
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
-#define MIN(a, b) ((a)<(b)? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 typedef enum EquationType 
 {
@@ -260,9 +260,9 @@ bool canTarget(EquationType tower, float health)
         case ET_LOG_10:
             return health > 0;
         case ET_TAN:
-            if (health - (int)health < FLT_EPSILON)
+            if (fabsf(health - (int)health) > FLT_EPSILON)
                 return true;
-            return (int)health % 45 != 0;
+            return ((int)health % 90 != 0) || ((int)health % 180 == 0);
         default:
             printf("ERROR: Type of tower unknown: %d\n", tower);
             assert(false); // always assert
@@ -292,6 +292,9 @@ TakeHealthResult takeHealth(Enemy *e, Tower *t, int rounding)
         case ET_LOG_2: e->health = log2f(e->health); break;
         case ET_LOG_10: e->health = log10f(e->health); break;
         case ET_ROUND: e->health = roundf(e->health * powf(10, t->scale - 1)) / powf(10, t->scale - 1); break;
+        case ET_SIN: e->health = sinf(DEG2RAD * e->health); break;
+        case ET_COS: e->health = cosf(DEG2RAD * e->health); break;
+        case ET_TAN: e->health = tanf(DEG2RAD * e->health); break;
         default:
             printf("ERROR: Type of tower unknown: %d\n", t->type);
             assert(false);
