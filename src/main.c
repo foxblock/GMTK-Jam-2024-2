@@ -277,7 +277,7 @@ typedef enum TakeHealthResult
     TH_SAVED_BY_ROUNDING,
 } TakeHealthResult;
 
-// takes health and returns
+// takes health and returns state of enemy
 TakeHealthResult takeHealth(Enemy *e, Tower *t, int rounding)
 {
     switch (t->type)
@@ -299,7 +299,7 @@ TakeHealthResult takeHealth(Enemy *e, Tower *t, int rounding)
     float healthNotRounded = 0;
     if (rounding > 0)
     {
-        healthNotRounded = floorf(e->health * rounding) / rounding;
+        healthNotRounded = (float)(int)(e->health * rounding) / rounding;
         e->health = roundf(e->health * rounding) / rounding;
     }
 
