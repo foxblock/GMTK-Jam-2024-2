@@ -918,7 +918,6 @@ void level(GameState *state)
     int aliveCount = 0;
     bool gameEnded = false;
 
-    // TODO: Save queue for reset
     EnemyQueue *queueBackup = calloc(QUEUE_SIZE, sizeof(queueBackup[0]));
     memcpy(queueBackup, state->queue, QUEUE_SIZE * sizeof(queueBackup[0]));
     unsigned int queueBackupHead = state->queueHead;
@@ -1303,7 +1302,10 @@ void level_draw(GameState *state)
     {
         Tower t = state->towers[i];
         DrawRectangleRec(t.rect, DARKGRAY);
-        snprintf(text, sizeof(text), SIGNS[t.type], t.scale);
+        if (t.type == ET_ROUND)
+            snprintf(text, sizeof(text), SIGNS[t.type], t.scale-1, 1.0f / powf(10, t.scale - 1));
+        else
+            snprintf(text, sizeof(text), SIGNS[t.type], t.scale);
         int fontSize = FONT_SIZE;
         textWidthPixels = MeasureText(text, fontSize);
         while (textWidthPixels > TOWER_SIZE && fontSize > MIN_FONT_SIZE)
@@ -1629,8 +1631,7 @@ void playground(GameState *state)
             if ((state->home.allowedTowers & 1 << i) == 0)
                 continue;
 
-            // FIXME: The button text only updates when active
-            if (currentType == ET_ROUND)
+            if (i == ET_ROUND)
                 snprintf(text, sizeof(text), SIGNS[i], currentScale - 1, 1.0f / powf(10, currentScale - 1));
             else
                 snprintf(text, sizeof(text), SIGNS[i], currentScale);
