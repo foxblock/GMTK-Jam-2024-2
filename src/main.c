@@ -11,6 +11,10 @@
 #include "raygui.h"
 #undef RAYGUI_IMPLEMENTATION
 
+#define JS_BASE64_IMPLEMENTATION
+#include "base64.h"
+#undef JS_BASE64_IMPLEMENTATION
+
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -30,7 +34,6 @@ typedef enum EquationType
     ET_SIN,
     ET_COS,
     ET_TAN,
-    // TODO: ET_FACTORIAL
     ET_EOL,
 } EquationType;
 
@@ -49,7 +52,6 @@ const char* SIGNS[ET_EOL] = {
     "sin",
     "cos",
     "tan",
-    //"%d!",
 };
 
 #define HEALTH_DEFAULT 10
@@ -490,6 +492,73 @@ const LevelDef LEVELS[] = {
     },
 };
 
+void state_loadFromLevelDef(GameState *state, LevelDef l, int index)
+{
+    assert(state);
+
+    state_addQueueFromString(state, 0, l.health, l.count, l.spacing);
+    state->home.allowedTowers = l.towersAllowed;
+    state->home.minTowers = l.minSolution;
+    state->home.roundingFactor = l.roundingFactor;
+    state->home.levelIndex = index;
+}
+
+#define LEVEL_STR_VERSION 1
+
+bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower towers[], int towerCnt)
+{
+    assert(output);
+    assert(level.name);
+    assert(level.health);
+    assert(LEVEL_STR_VERSION < 256);
+
+    static const int VERSION_SIZE = 1;
+    static const int STRING_LEN_SIZE = 1 + 1;
+    static const int LEVEL_DEF_SKIP_SIZE = 2 * sizeof(const char*) + sizeof(LevelCat);
+    static const int TOWER_BYTES_SIZE = sizeof(int) * 4;
+    const int towerLen = TOWER_BYTES_SIZE * towerCnt;
+    const int nameLen = strlen(level.name);
+    const int healthLen = strlen(level.health);
+    if (nameLen > 255)
+        return false;
+    if (healthLen > 255)
+        return false;
+    int byteSize = VERSION_SIZE + STRING_LEN_SIZE + sizeof(level) - LEVEL_DEF_SKIP_SIZE
+            + nameLen + healthLen + towerLen;
+    if (outputLen < base64_strlen(byteSize))
+        return false;
+    
+    unsigned char *bytes = calloc(byteSize, 1);
+    assert(bytes != NULL);
+    int idx = 0;
+    bytes[idx++] = LEVEL_STR_VERSION;
+    bytes[idx++] = nameLen;
+    memcpy(bytes + idx, level.name, nameLen);
+    idx += nameLen;
+    bytes[idx++] = healthLen;
+    memcpy(bytes + idx, level.health, healthLen);
+    idx += healthLen;
+    unsigned char *levelStart = (unsigned char*)&level + LEVEL_DEF_SKIP_SIZE;
+    const int levelLen = sizeof(level) - LEVEL_DEF_SKIP_SIZE;
+    memcpy(bytes + idx, levelStart, levelLen);
+    idx += levelLen;
+    for (int t = 0; t < towerCnt; ++t)
+    {
+        int *bytesStart = (int*)(bytes + idx);
+        bytesStart[0] = towers[t].center.x / TOWER_SIZE - 0.5;
+        bytesStart[1] = towers[t].center.y / TOWER_SIZE - 0.5;
+        bytesStart[2] = towers[t].type;
+        bytesStart[3] = towers[t].scale;
+        idx += TOWER_BYTES_SIZE;
+    }
+    assert(idx == byteSize);
+
+    base64_encode(output, outputLen, bytes, byteSize);
+
+    free(bytes);
+    return true;
+}
+
 typedef struct Savegame
 {
     int progress;
@@ -558,6 +627,8 @@ int main(void)
     screen = LoadRenderTexture(screenWidth, screenHeight);
     assert(screen.id != 0);
     SetTextureFilter(screen.texture, TEXTURE_FILTER_BILINEAR);  // Texture scale filter to use
+
+    base64_test();
 
     load_progress(&save, SAVE_FILE);
 
@@ -732,15 +803,6 @@ void menu(void)
     }
 }
 
-void state_loadFromLevelDef(GameState *state, LevelDef l, int index)
-{
-    state_addQueueFromString(state, 0, l.health, l.count, l.spacing);
-    state->home.allowedTowers = l.towersAllowed;
-    state->home.minTowers = l.minSolution;
-    state->home.roundingFactor = l.roundingFactor;
-    state->home.levelIndex = index;
-}
-
 void tutorial(void)
 {
     bool sceneChange = false;
@@ -807,7 +869,7 @@ void tutorial(void)
 void level_select(GameState *state)
 {
     bool sceneChange = false;
-    int arraySize = sizeof(LEVELS) / sizeof(LEVELS[0]);
+    int levelCount = ARRAY_SIZE(LEVELS);
     bool unlockAll = false;
 
     // Main game loop
@@ -833,7 +895,7 @@ void level_select(GameState *state)
         int yPos = 48;
         int currentCat = -1;
         char text[128] = "";
-        for (int i = 0; i < arraySize; ++i)
+        for (int i = 0; i < levelCount; ++i)
         {
             LevelDef l = LEVELS[i];
             if (l.cat != currentCat)
@@ -1419,6 +1481,7 @@ void playground(GameState *state)
 
     Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING*2, screenWidth, BUTTON_SIZE + GUI_SPACING*2};
     Rectangle guiAreaTop = {0, 0, screenWidth, TOWER_SIZE + 1};
+    Rectangle guiAreaRight = {screenWidth - 150, 0, screenWidth, screenHeight};
     Rectangle countBox = {screenWidth - 124, 32, 120, 24};
     char countText[16] = "1";
     Rectangle healthBox = {screenWidth - 124, 60, 120, 24};
@@ -1427,10 +1490,14 @@ void playground(GameState *state)
     char spacingText[16] = "120";
     int editBoxActive = EB_NONE;
     Rectangle queueButton = {screenWidth - 124, 116, 120, 24};
+    Rectangle encodeButton = {screenWidth - 124, 300, 120, 24};
+    Rectangle towerCheckbox = {screenWidth - 124, 328, 24, 24};
+    Rectangle decodeButton = {screenWidth - 124, 356, 120, 24};
 
     bool paused = false;
     bool sceneChange = false;
     int speedLevel = 1;
+    bool encodeWithTowers = false;
 
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
@@ -1476,7 +1543,7 @@ void playground(GameState *state)
         // TODO: Optimize this / make a sane version of this check
         if (canPlaceTower)
         {
-            canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), queueButton);
+            canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), guiAreaRight);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiAreaTop);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->home.rect);
@@ -1611,6 +1678,40 @@ void playground(GameState *state)
             assert(spacing > 0);
 
             state_addQueueFromString(state, frame, healthText, count, spacing);
+        }
+        GuiCheckBox(towerCheckbox, "with Towers", &encodeWithTowers);
+        if (GuiButton(encodeButton, "Copy to Clipboard"))
+        {
+            int count = atoi(countText);
+            int spacing = atoi(spacingText);
+            assert(count > 0);
+            assert(spacing > 0);
+
+            char levelStr[2048] = "";
+            LevelDef level = {
+                .name = "",
+                .cat = LC_NATURAL,
+                .health = healthText,
+                .count = count,
+                .spacing = spacing,
+                .towersAllowed = state->home.allowedTowers,
+                .minSolution = state->home.minTowers,
+                .roundingFactor = state->home.roundingFactor,
+            };
+            bool res = state_levelToString(levelStr, sizeof(levelStr), level, state->towers, 
+                encodeWithTowers ? state->towerLen : 0);
+            if (res)
+            {
+                SetClipboardText(levelStr);
+            }
+            else
+            {
+                // TODO: Show error message
+            }
+        }
+        if (GuiButton(decodeButton, "Load from Clipboard"))
+        {
+
         }
 
         int xPos = 4;
