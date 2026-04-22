@@ -193,9 +193,9 @@ void state_reset(GameState *s)
     s->msgIndex = 0;
 }
 
-void state_addTower(GameState *s, int tileX, int tileY, int type, int scale)
+void state_addTower(Tower *towers, unsigned int *towerLen, int tileX, int tileY, int type, int scale)
 {
-    s->towers[s->towerLen++] = (Tower){
+    towers[*towerLen] = (Tower){
         .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
         .center = {(tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE},
         .type = type,
@@ -203,6 +203,7 @@ void state_addTower(GameState *s, int tileX, int tileY, int type, int scale)
         .range = TOWER_RANGE,
         .cooldown = 60,
     };
+    *towerLen += 1;
 }
 
 // returns true if all entries were added
@@ -504,6 +505,11 @@ void state_loadFromLevelDef(GameState *state, LevelDef l, int index)
 }
 
 #define LEVEL_STR_VERSION 1
+static const int VERSION_SIZE = 1;
+static const int STRING_LEN_SIZE = 1 + 1;
+static const int LEVEL_DEF_SKIP_SIZE = 2 * sizeof(const char*) + sizeof(LevelCat);
+static const int TOWER_LEN_SIZE = 1;
+static const int TOWER_BYTES_SIZE = sizeof(int) * 4;
 
 bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower towers[], int towerCnt)
 {
@@ -511,37 +517,40 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
     assert(level.name);
     assert(level.health);
     assert(LEVEL_STR_VERSION < 256);
+    assert(towerCnt < 256);
 
-    static const int VERSION_SIZE = 1;
-    static const int STRING_LEN_SIZE = 1 + 1;
-    static const int LEVEL_DEF_SKIP_SIZE = 2 * sizeof(const char*) + sizeof(LevelCat);
-    static const int TOWER_BYTES_SIZE = sizeof(int) * 4;
     const int towerLen = TOWER_BYTES_SIZE * towerCnt;
-    const int nameLen = strlen(level.name);
-    const int healthLen = strlen(level.health);
+    const size_t nameLen = strlen(level.name);
+    const size_t healthLen = strlen(level.health);
     if (nameLen > 255)
         return false;
     if (healthLen > 255)
         return false;
-    int byteSize = VERSION_SIZE + STRING_LEN_SIZE + sizeof(level) - LEVEL_DEF_SKIP_SIZE
-            + nameLen + healthLen + towerLen;
+    int byteSize = VERSION_SIZE + STRING_LEN_SIZE + nameLen + healthLen 
+            + sizeof(level) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE + towerLen;
     if (outputLen < base64_strlen(byteSize))
         return false;
     
     unsigned char *bytes = calloc(byteSize, 1);
     assert(bytes != NULL);
     int idx = 0;
+
     bytes[idx++] = LEVEL_STR_VERSION;
-    bytes[idx++] = nameLen;
+
+    bytes[idx++] = (unsigned char)nameLen;
     memcpy(bytes + idx, level.name, nameLen);
     idx += nameLen;
-    bytes[idx++] = healthLen;
+
+    bytes[idx++] = (unsigned char)healthLen;
     memcpy(bytes + idx, level.health, healthLen);
     idx += healthLen;
+
     unsigned char *levelStart = (unsigned char*)&level + LEVEL_DEF_SKIP_SIZE;
     const int levelLen = sizeof(level) - LEVEL_DEF_SKIP_SIZE;
     memcpy(bytes + idx, levelStart, levelLen);
     idx += levelLen;
+
+    bytes[idx++] = (unsigned char)towerCnt;
     for (int t = 0; t < towerCnt; ++t)
     {
         int *bytesStart = (int*)(bytes + idx);
@@ -551,11 +560,82 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
         bytesStart[3] = towers[t].scale;
         idx += TOWER_BYTES_SIZE;
     }
+
     assert(idx == byteSize);
 
     base64_encode(output, outputLen, bytes, byteSize);
 
     free(bytes);
+    return true;
+}
+
+bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *health, size_t healthCap,
+    Tower towers[], int *towerCnt, 
+    const char *input)
+{
+    assert(output);
+    assert(name);
+    assert(health);
+    assert(towers);
+    assert(towerCnt);
+    assert(input);
+
+    const int minSize = VERSION_SIZE + STRING_LEN_SIZE + sizeof(*output) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE;
+    unsigned char bytes[2048] = {0};
+    int bytesLen = base64_decode(bytes, sizeof(bytes), input, strlen(input));
+    if (bytesLen == 0)
+        return false;
+    if (bytesLen < minSize)
+        return false;
+
+    int idx = 0;
+    int version = bytes[idx++];
+    if (version != LEVEL_STR_VERSION)
+        return false;
+    
+    int nameLen = bytes[idx++];
+    if (nameLen > bytesLen - idx)
+        return false;
+    if (nameLen > nameCap)
+        return false;
+    memcpy(name, bytes + idx, nameLen);
+    name[nameLen] = 0;
+    idx += nameLen;
+
+    if (idx >= bytesLen)
+        return false;
+    int healthLen = bytes[idx++];
+    if (healthLen > bytesLen - idx)
+        return false;
+    if (healthLen > healthCap)
+        return false;
+    memcpy(health, bytes + idx, healthLen);
+    health[healthLen] = 0;
+    idx += healthLen;
+
+    int structLen = sizeof(*output) - LEVEL_DEF_SKIP_SIZE;
+    if (structLen > bytesLen - idx)
+        return false;
+    unsigned char *structStart = (unsigned char*)output + LEVEL_DEF_SKIP_SIZE;
+    memcpy(structStart, bytes + idx, structLen);
+    idx += structLen;
+
+    if (idx >= bytesLen)
+        return false;
+    int towerLen = bytes[idx++];
+    if (towerLen * TOWER_BYTES_SIZE > bytesLen - idx)
+        return false;
+    if (towerLen > MAX_TOWERS)
+        return false;
+    for (int t = 0; t < towerLen; ++t)
+    {
+        int *bytesStart = (int*)(bytes + idx);
+        state_addTower(towers, towerCnt, bytesStart[0], bytesStart[1], bytesStart[2], bytesStart[3]);
+        idx += TOWER_BYTES_SIZE;
+    }
+
+    assert(idx == bytesLen);
+
     return true;
 }
 
@@ -1032,7 +1112,7 @@ void level(GameState *state)
             int scale = 1;
             if (currentType == ET_MULT || currentType == ET_DIV)
                 scale = 2;
-            state_addTower(state, tileX, tileY, currentType, scale);
+            state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, scale);
         }
 
         // ------------------ Logic ------------------
@@ -1497,7 +1577,7 @@ void playground(GameState *state)
     bool paused = false;
     bool sceneChange = false;
     int speedLevel = 1;
-    bool encodeWithTowers = false;
+    bool loadSaveWithTowers = false;
 
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
@@ -1557,7 +1637,7 @@ void playground(GameState *state)
 
         if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
         {
-            state_addTower(state, tileX, tileY, currentType, currentScale);
+            state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, currentScale);
         }
 
         // ------------------ Logic ------------------
@@ -1679,7 +1759,7 @@ void playground(GameState *state)
 
             state_addQueueFromString(state, frame, healthText, count, spacing);
         }
-        GuiCheckBox(towerCheckbox, "with Towers", &encodeWithTowers);
+        GuiCheckBox(towerCheckbox, "with Towers", &loadSaveWithTowers);
         if (GuiButton(encodeButton, "Copy to Clipboard"))
         {
             int count = atoi(countText);
@@ -1689,29 +1769,59 @@ void playground(GameState *state)
 
             char levelStr[2048] = "";
             LevelDef level = {
-                .name = "",
+                .name = "", // TODO: add control
                 .cat = LC_NATURAL,
                 .health = healthText,
                 .count = count,
                 .spacing = spacing,
-                .towersAllowed = state->home.allowedTowers,
-                .minSolution = state->home.minTowers,
+                .towersAllowed = state->home.allowedTowers, // TODO: add control
+                .minSolution = state->home.minTowers, // TODO: add control
                 .roundingFactor = state->home.roundingFactor,
             };
             bool res = state_levelToString(levelStr, sizeof(levelStr), level, state->towers, 
-                encodeWithTowers ? state->towerLen : 0);
+                loadSaveWithTowers ? state->towerLen : 0);
             if (res)
             {
                 SetClipboardText(levelStr);
             }
             else
             {
-                // TODO: Show error message
+                printf("ERROR: Failed to generate level string!\n");
             }
         }
         if (GuiButton(decodeButton, "Load from Clipboard"))
         {
-
+            const char *clipboard = GetClipboardText();
+            LevelDef level = {0};
+            char name[256] = "";
+            char health[sizeof(healthText)] = "";
+            Tower towers[MAX_TOWERS] = {0};
+            int towerCnt = 0;
+            bool res = state_levelFromString(&level, name, sizeof(name), health, sizeof(health),
+                    towers, &towerCnt, clipboard);
+            if (res)
+            {
+                // TODO: name
+                strcpy(healthText, health);
+                sprintf(countText, "%d", level.count);
+                sprintf(spacingText, "%d", level.spacing);
+                state->home.allowedTowers = level.towersAllowed;
+                state->home.minTowers = level.minSolution;
+                state->home.roundingFactor = level.roundingFactor;
+                if (loadSaveWithTowers)
+                {
+                    state->towerLen = towerCnt;
+                    memcpy(state->towers, towers, sizeof(towers[0]) * towerCnt);
+                }
+                else
+                {
+                    state->towerLen = 0;
+                }
+            }
+            else
+            {
+                printf("ERROR: Failed to load level from string!\n");
+            }
         }
 
         int xPos = 4;
