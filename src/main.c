@@ -1231,7 +1231,7 @@ void level(GameState *state)
             paused = false;
         }
         btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 3 && !paused);
+        speedBtnActive = (speedLevel == 4 && !paused);
         GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
@@ -1239,7 +1239,7 @@ void level(GameState *state)
             paused = false;
         }
         btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 6 && !paused);
+        speedBtnActive = (speedLevel == 12 && !paused);
         GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
@@ -1681,7 +1681,7 @@ void playground(GameState *state)
             sceneChange = true;
             break;
         }
-        int btnPos = (screenWidth - 3 * 24 - 2 * GUI_SPACING) / 2;
+        int btnPos = (screenWidth - 4 * 24 - 3 * GUI_SPACING) / 2;
         bool speedBtnActive = paused;
         GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
         paused = speedBtnActive;
@@ -1694,14 +1694,21 @@ void playground(GameState *state)
             paused = false;
         }
         btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel > 1 && !paused);
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_NEXT, NULL), &speedBtnActive);
+        speedBtnActive = (speedLevel == 4 && !paused);
+        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
             speedLevel = 4;
             paused = false;
         }
         btnPos += 24 + GUI_SPACING;
+        speedBtnActive = (speedLevel == 12 && !paused);
+        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
+        if (speedBtnActive)
+        {
+            speedLevel = 12;
+            paused = false;
+        }
         if (paused)
         {
             int textW = MeasureText("PAUSED", FONT_SIZE * 2);
