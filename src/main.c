@@ -30,9 +30,10 @@ typedef enum EquationType
     ET_SIN,
     ET_COS,
     ET_TAN,
-
-    ET_EOL
+    // TODO: ET_FACTORIAL
+    ET_EOL,
 } EquationType;
+
 const char* SIGNS[ET_EOL] = {
     "none",
     "+%d",
@@ -48,6 +49,7 @@ const char* SIGNS[ET_EOL] = {
     "sin",
     "cos",
     "tan",
+    //"%d!",
 };
 
 #define HEALTH_DEFAULT 10

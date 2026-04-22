@@ -52,7 +52,7 @@ if "%debug%"=="1" (
 )
 
 if "%clean%"=="1" (del /F /Q %OUT_DIR%)
-if "%INPUT%"=="clean" (exit /b)
+if "%1"=="clean" if "%2"=="" (exit /b)
 
 if not exist %OUT_DIR% mkdir %OUT_DIR%
 
