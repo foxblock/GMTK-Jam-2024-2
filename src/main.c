@@ -706,7 +706,7 @@ int main(void)
     // Render texture initialization, used to hold the rendering result so we can easily resize it
     screen = LoadRenderTexture(screenWidth, screenHeight);
     assert(screen.id != 0);
-    SetTextureFilter(screen.texture, TEXTURE_FILTER_BILINEAR);  // Texture scale filter to use
+    SetTextureFilter(screen.texture, TEXTURE_FILTER_ANISOTROPIC_16X);  // Texture scale filter to use
 
     base64_test();
 
@@ -1177,7 +1177,7 @@ void level(GameState *state)
             DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, canPlaceTower ? GRAY : MAROON);
             if (canPlaceTower)
             {
-                DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, BLACK);
+                DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, GRAY);
             }
         }
 
@@ -1666,7 +1666,7 @@ void playground(GameState *state)
             DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, canPlaceTower ? GRAY : MAROON);
             if (canPlaceTower)
             {
-                DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, BLACK);
+                DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, GRAY);
             }
         }
 
@@ -1675,6 +1675,12 @@ void playground(GameState *state)
         EndMode2D();
 
         // GUI
+        if (GuiButton((Rectangle){4, 4, 24, 24}, GuiIconText(ICON_EXIT, NULL)))
+        {
+            scene = SC_MENU;
+            sceneChange = true;
+            break;
+        }
         int btnPos = (screenWidth - 3 * 24 - 2 * GUI_SPACING) / 2;
         bool speedBtnActive = paused;
         GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
