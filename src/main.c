@@ -101,6 +101,7 @@ typedef struct Tower
 {
     Rectangle rect;
     Vector2 center;
+    Vector2 tile;
     EquationType type;
     int scale;
     int range;
@@ -198,6 +199,7 @@ void state_addTower(Tower *towers, unsigned int *towerLen, int tileX, int tileY,
     towers[*towerLen] = (Tower){
         .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
         .center = {(tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE},
+        .tile = {tileX, tileY},
         .type = type,
         .scale = scale,
         .range = TOWER_RANGE,
@@ -273,6 +275,21 @@ bool canTarget(EquationType tower, float health)
             assert(false); // always assert
     }
     return false;
+}
+
+bool canBeUpgraded(Tower tower)
+{
+    switch (tower.type)
+    {
+        case ET_ADD:
+        case ET_SUB:
+        case ET_MULT:
+        case ET_DIV:
+        case ET_ROUND:
+            return true;
+        default:
+            return false;
+    }
 }
 
 typedef enum TakeHealthResult
@@ -554,8 +571,8 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
     for (int t = 0; t < towerCnt; ++t)
     {
         int *bytesStart = (int*)(bytes + idx);
-        bytesStart[0] = towers[t].center.x / TOWER_SIZE - 0.5;
-        bytesStart[1] = towers[t].center.y / TOWER_SIZE - 0.5;
+        bytesStart[0] = towers[t].tile.x;
+        bytesStart[1] = towers[t].tile.y;
         bytesStart[2] = towers[t].type;
         bytesStart[3] = towers[t].scale;
         idx += TOWER_BYTES_SIZE;
@@ -671,7 +688,7 @@ bool save_progress(Savegame *data, const char *filename)
     if (f == NULL)
         return false;
     
-    int res = fwrite(data, 1, sizeof(*data), f);
+    int res = fwrite(data, sizeof(*data), 1, f);
     if (res != sizeof(*data))
         return false;
 
@@ -1557,15 +1574,14 @@ void playground(GameState *state)
     
     Rectangle path = {100, 200, screenWidth - 100, TOWER_SIZE};
     int currentType = ET_SUB;
-    int currentScale = 1;
 
     Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING*2, screenWidth, BUTTON_SIZE + GUI_SPACING*2};
     Rectangle guiAreaTop = {0, 0, screenWidth, TOWER_SIZE + 1};
     Rectangle guiAreaRight = {screenWidth - 150, 0, screenWidth, screenHeight};
     Rectangle countBox = {screenWidth - 124, 32, 120, 24};
-    char countText[16] = "1";
+    char countText[16] = "3";
     Rectangle healthBox = {screenWidth - 124, 60, 120, 24};
-    char healthText[256] = "10";
+    char healthText[256] = "1,2,3,-3,-2,-1,0.1,0.5,0.9";
     Rectangle spacingBox = {screenWidth - 124, 88, 120, 24};
     char spacingText[16] = "120";
     int editBoxActive = EB_NONE;
@@ -1605,7 +1621,6 @@ void playground(GameState *state)
         {
             editBoxActive = EB_SPACING;
         }
-        bool canPlaceTower = editBoxActive == EB_NONE;
 
         if (IsKeyPressed(KEY_R))
         {
@@ -1621,7 +1636,8 @@ void playground(GameState *state)
         }
 
         // TODO: Optimize this / make a sane version of this check
-        if (canPlaceTower)
+        bool canPlaceTower = editBoxActive == EB_NONE && currentType != ET_NONE;
+        if (canPlaceTower) // check GUI
         {
             canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), guiAreaRight);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiAreaTop);
@@ -1630,14 +1646,28 @@ void playground(GameState *state)
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), 
                 CLITERAL(Rectangle){0, screenHeight - BUTTON_SIZE*2 - GUI_SPACING*3, BUTTON_SIZE + GUI_SPACING*2, BUTTON_SIZE + GUI_SPACING*2});
+        }
+        int towerAtPos = -1;
+        if (canPlaceTower) // check other towers
+        {
             for (int i = 0; i < state->towerLen; ++i) {
-                canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->towers[i].rect);
+                if (CheckCollisionPointRec(GetMousePosition(), state->towers[i].rect))
+                {
+                    towerAtPos = i;
+                    if (state->towers[towerAtPos].type != currentType)
+                        canPlaceTower = false;
+                    else if (!canBeUpgraded(state->towers[towerAtPos]))
+                        canPlaceTower = false;
+                    break;
+                }
             }
         }
-
-        if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
+        if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower)
         {
-            state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, currentScale);
+            if (towerAtPos == -1)
+                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, 1);
+            else 
+                state->towers[towerAtPos].scale += 1;
         }
 
         // ------------------ Logic ------------------
@@ -1796,6 +1826,7 @@ void playground(GameState *state)
             if (res)
             {
                 SetClipboardText(levelStr);
+                printf("Successfully copied level to clipboard!\n");
             }
             else
             {
@@ -1830,6 +1861,7 @@ void playground(GameState *state)
                 {
                     state->towerLen = 0;
                 }
+                printf("Successfully loaded level from clipboard!\n");
             }
             else
             {
@@ -1839,18 +1871,6 @@ void playground(GameState *state)
 
         int xPos = 4;
         int yPos = screenHeight - BUTTON_SIZE - GUI_SPACING;
-        if (GuiButton((Rectangle){xPos, yPos, BUTTON_SIZE, (BUTTON_SIZE - GUI_SPACING) / 2}, 
-            GuiIconText(ICON_ARROW_UP, NULL)))
-        {
-            ++currentScale;
-        }
-        if (GuiButton((Rectangle){xPos, yPos + (BUTTON_SIZE + GUI_SPACING) / 2, BUTTON_SIZE, (BUTTON_SIZE - GUI_SPACING) / 2}, 
-            GuiIconText(ICON_ARROW_DOWN, NULL)))
-        {
-            if (currentScale > 1)
-                --currentScale;
-        }
-        xPos += BUTTON_SIZE + GUI_SPACING;
         char text[64] = "";
         for (int i = 0; i < ET_EOL; ++i)
         {
@@ -1858,9 +1878,12 @@ void playground(GameState *state)
                 continue;
 
             if (i == ET_ROUND)
-                snprintf(text, sizeof(text), SIGNS[i], currentScale - 1, 1.0f / powf(10, currentScale - 1));
+            {
+                int startScale = 1;
+                snprintf(text, sizeof(text), SIGNS[i], startScale - 1, 1.0f / powf(10, startScale - 1));
+            }
             else
-                snprintf(text, sizeof(text), SIGNS[i], currentScale);
+                snprintf(text, sizeof(text), SIGNS[i], 1);
             bool active = currentType == i;
             GuiToggle((Rectangle){ xPos, yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
             if (active)
