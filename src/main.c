@@ -37,22 +37,40 @@ typedef enum EquationType
     ET_EOL,
 } EquationType;
 
-const char* SIGNS[ET_EOL] = {
-    "none",
-    "+%d",
-    "-%d",
-    "*%d",
-    "/%d",
-    "x²",
-    "sqrt()",
-    "ln()",
-    "log_2()",
-    "log_10",
-    "round\n%.*f",
-    "sin",
-    "cos",
-    "tan",
+typedef struct TowerDefault
+{
+    const char *text;
+    int scale;
+    bool (*canTarget)(float health);
+    bool canUpgrade;
+} TowerDefault;
+
+static bool _target_all(float health) { return true; }
+static bool _target_positive(float health) { return health > 0; }
+static bool _target_tan(float health)
+{
+    if (fabsf(health - (int)health) > FLT_EPSILON)
+        return true;
+    return ((int)health % 90 != 0) || ((int)health % 180 == 0);
+}
+
+const TowerDefault TOWER_DEF[] = {
+    [ET_NONE] = { "none", 0, NULL, false },
+    [ET_ADD] = { "+%d", 1, _target_all, true },
+    [ET_SUB] = { "-%d", 1, _target_all, true },
+    [ET_MULT] = { "*%d", 2, _target_all, true },
+    [ET_DIV] = { "/%d", 2, _target_all, true },
+    [ET_SQR] = { "x²", 1, _target_all, false },
+    [ET_SQRT] = { "sqrt()", 1, _target_positive, false },
+    [ET_LOG_E] = { "ln()", 1, _target_positive, false },
+    [ET_LOG_2] = { "log_2()", 1, _target_positive, false },
+    [ET_LOG_10] = { "log_10", 1, _target_positive, false },
+    [ET_ROUND] = { "round\n%.*f", 1, _target_all, true },
+    [ET_SIN] = { "sin", 1, _target_all, false },
+    [ET_COS] = { "cos", 1, _target_all, false },
+    [ET_TAN] = { "tan", 1, _target_tan, false },
 };
+static_assert(ARRAY_SIZE(TOWER_DEF) == ET_EOL);
 
 #define HEALTH_DEFAULT 10
 // TODO: Split this more sensibly into "LevelParams" struct or something
@@ -248,50 +266,6 @@ bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char 
     return true;
 }
 
-bool canTarget(EquationType tower, float health)
-{
-    switch (tower)
-    {
-        case ET_ADD:
-        case ET_SUB:
-        case ET_MULT:
-        case ET_DIV:
-        case ET_SQR:
-        case ET_ROUND:
-        case ET_SIN:
-        case ET_COS:
-            return true;
-        case ET_SQRT:
-        case ET_LOG_E:
-        case ET_LOG_2:
-        case ET_LOG_10:
-            return health > 0;
-        case ET_TAN:
-            if (fabsf(health - (int)health) > FLT_EPSILON)
-                return true;
-            return ((int)health % 90 != 0) || ((int)health % 180 == 0);
-        default:
-            printf("ERROR: Type of tower unknown: %d\n", tower);
-            assert(false); // always assert
-    }
-    return false;
-}
-
-bool canBeUpgraded(Tower tower)
-{
-    switch (tower.type)
-    {
-        case ET_ADD:
-        case ET_SUB:
-        case ET_MULT:
-        case ET_DIV:
-        case ET_ROUND:
-            return true;
-        default:
-            return false;
-    }
-}
-
 typedef enum TakeHealthResult
 {
     TH_DEAD,
@@ -414,7 +388,7 @@ const LevelDef LEVELS[] = {
         .count = 3,
         .spacing = QUEUE_SPACING_DEFAULT,
         .towersAllowed = (1 << ET_NONE) | (1 << ET_ADD) | (1 << ET_SUB),
-        .minSolution = 5, // [-1] * 2
+        .minSolution = 5, // [-1] * 5
         .roundingFactor = 1,
     },
     {
@@ -1272,20 +1246,17 @@ void level(GameState *state)
 
         int xPos = 4;
         int yPos = screenHeight - BUTTON_SIZE - GUI_SPACING;
-        for (int i = 0; i < ET_EOL; ++i)
+        for (int tdx = 0; tdx < ET_EOL; ++tdx)
         {
-            if ((state->home.allowedTowers & 1 << i) == 0)
+            if ((state->home.allowedTowers & 1 << tdx) == 0)
                 continue;
 
-            int scale = 1;
-            if (i == ET_MULT || i == ET_DIV)
-                scale = 2;
-            snprintf(text, sizeof(text), SIGNS[i], scale);
-            bool active = currentType == i;
+            snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
+            bool active = currentType == tdx;
             GuiToggle((Rectangle){ xPos, yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
             if (active)
             {
-                currentType = i;
+                currentType = tdx;
             }
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
@@ -1373,7 +1344,7 @@ void level_logic(GameState *state, unsigned int frame)
                 continue;
             if (!CheckCollisionCircles(e->pos, ENEMY_SIZE, t->center, t->range))
                 continue;
-            if (!canTarget(t->type, e->health))
+            if (!TOWER_DEF[t->type].canTarget(e->health))
                 continue;
             if (hasAlreadyTargeted(t->enemiesShot, TOWER_LIST_SIZE, i_enemy+1))
                 continue;
@@ -1464,9 +1435,9 @@ void level_draw(GameState *state)
         Tower t = state->towers[i];
         DrawRectangleRec(t.rect, DARKGRAY);
         if (t.type == ET_ROUND)
-            snprintf(text, sizeof(text), SIGNS[t.type], t.scale-1, 1.0f / powf(10, t.scale - 1));
+            snprintf(text, sizeof(text), TOWER_DEF[t.type].text, t.scale-1, 1.0f / powf(10, t.scale - 1));
         else
-            snprintf(text, sizeof(text), SIGNS[t.type], t.scale);
+            snprintf(text, sizeof(text), TOWER_DEF[t.type].text, t.scale);
         int fontSize = FONT_SIZE;
         textWidthPixels = MeasureText(text, fontSize);
         while (textWidthPixels > TOWER_SIZE && fontSize > MIN_FONT_SIZE)
@@ -1647,16 +1618,17 @@ void playground(GameState *state)
             canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), 
                 CLITERAL(Rectangle){0, screenHeight - BUTTON_SIZE*2 - GUI_SPACING*3, BUTTON_SIZE + GUI_SPACING*2, BUTTON_SIZE + GUI_SPACING*2});
         }
-        int towerAtPos = -1;
+        int towerAtMouse = -1;
         if (canPlaceTower) // check other towers
         {
             for (int i = 0; i < state->towerLen; ++i) {
                 if (CheckCollisionPointRec(GetMousePosition(), state->towers[i].rect))
                 {
-                    towerAtPos = i;
-                    if (state->towers[towerAtPos].type != currentType)
+                    towerAtMouse = i;
+                    EquationType typeAtMouse = state->towers[towerAtMouse].type;
+                    if (typeAtMouse != currentType)
                         canPlaceTower = false;
-                    else if (!canBeUpgraded(state->towers[towerAtPos]))
+                    else if (!TOWER_DEF[typeAtMouse].canUpgrade)
                         canPlaceTower = false;
                     break;
                 }
@@ -1664,10 +1636,13 @@ void playground(GameState *state)
         }
         if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower)
         {
-            if (towerAtPos == -1)
-                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, 1);
+            if (towerAtMouse == -1)
+            {
+                int scale = TOWER_DEF[currentType].scale;
+                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, scale);
+            }
             else 
-                state->towers[towerAtPos].scale += 1;
+                state->towers[towerAtMouse].scale += 1;
         }
 
         // ------------------ Logic ------------------
@@ -1872,23 +1847,20 @@ void playground(GameState *state)
         int xPos = 4;
         int yPos = screenHeight - BUTTON_SIZE - GUI_SPACING;
         char text[64] = "";
-        for (int i = 0; i < ET_EOL; ++i)
+        for (int tdx = 0; tdx < ET_EOL; ++tdx)
         {
-            if ((state->home.allowedTowers & 1 << i) == 0)
+            if ((state->home.allowedTowers & 1 << tdx) == 0)
                 continue;
 
-            if (i == ET_ROUND)
-            {
-                int startScale = 1;
-                snprintf(text, sizeof(text), SIGNS[i], startScale - 1, 1.0f / powf(10, startScale - 1));
-            }
+            if (tdx == ET_ROUND)
+                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale - 1, 1.0f / powf(10, TOWER_DEF[tdx].scale - 1));
             else
-                snprintf(text, sizeof(text), SIGNS[i], 1);
-            bool active = currentType == i;
+                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
+            bool active = currentType == tdx;
             GuiToggle((Rectangle){ xPos, yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
             if (active)
             {
-                currentType = i;
+                currentType = tdx;
             }
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
