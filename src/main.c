@@ -220,6 +220,10 @@ void state_reset(GameState *s)
 
 void state_addTower(Tower *towers, unsigned int *towerLen, int tileX, int tileY, int type, int scale)
 {
+    assert(towers);
+    assert(towerLen);
+    assert(*towerLen < MAX_TOWERS);
+
     towers[*towerLen] = (Tower){
         .rect = {(float)tileX * TOWER_SIZE, (float)tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
         .center = {(tileX + 0.5f) * TOWER_SIZE, (tileY + 0.5f) * TOWER_SIZE},
@@ -1050,6 +1054,7 @@ void checkPlaceTower(bool *canPlace, int *upgradeIndex,
     if (!*canPlace)
         return;
 
+    if (state->towerLen >= MAX_TOWERS) { *canPlace = false; return; }
     if (selectedType == ET_NONE) { *canPlace = false; return; }
     if (CheckCollisionPointRec(pos, state->path)) { *canPlace = false; return; }
     if (CheckCollisionPointRec(pos, state->home.rect))  { *canPlace = false; return; }
@@ -1069,7 +1074,7 @@ void checkPlaceTower(bool *canPlace, int *upgradeIndex,
             EquationType typeAtMouse = state->towers[i].type;
             if (typeAtMouse != selectedType)
                 *canPlace = false;
-            else if (!TOWER_DEF[typeAtMouse].canUpgrade)
+            else if (!TOWER_DEF[typeAtMouse].canUpgrade || !state->home.upgradeAllowed)
                 *canPlace = false;
             else
                 *upgradeIndex = i;
@@ -1157,14 +1162,12 @@ void level(GameState *state)
         checkPlaceTower(&canPlaceTower, &upgradeTowerIndex, state, GetMousePosition(), currentType,
                 guiAreas, ARRAY_SIZE(guiAreas));
 
-        if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower)
+        if (IsMouseButtonPressed(0) && canPlaceTower)
         {
             if (upgradeTowerIndex == -1)
-            {
-                int tScale = TOWER_DEF[currentType].scale;
-                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, tScale);
-            }
-            else if (state->home.upgradeAllowed)
+                state_addTower(state->towers, &state->towerLen, tileX, tileY, 
+                        currentType, TOWER_DEF[currentType].scale);
+            else
                 state->towers[upgradeTowerIndex].scale += 1;
         }
 
@@ -1691,6 +1694,7 @@ void playground(GameState *state)
     bool statusGood = true;
     bool validateRun = false;
     bool levelValidated = false;
+    bool hasUpgradedTowers = false;
 
     enum PlaygroundGuiArea {
         TOWERS,
@@ -1709,6 +1713,8 @@ void playground(GameState *state)
     bool sceneChange = false;
     int speedLevel = 1;
 
+    state->home.upgradeAllowed = true;
+
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
     {
@@ -1722,9 +1728,10 @@ void playground(GameState *state)
             sceneChange = true;
             break;
         }
-        if (IsKeyPressed(KEY_R))
+        if (IsKeyPressed(KEY_R) && !validateRun)
         {
             state_reset(state);
+            hasUpgradedTowers = false;
         }
         if (IsKeyPressed(KEY_SPACE) && editBoxActive == EB_NONE)
         {
@@ -1746,15 +1753,16 @@ void playground(GameState *state)
         int upgradeTowerIndex = -1;
         checkPlaceTower(&canPlaceTower, &upgradeTowerIndex, state, GetMousePosition(), currentType, 
                 guiRects, ARRAY_SIZE(guiRects));
-        if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower)
+        if (IsMouseButtonPressed(0) && canPlaceTower)
         {
             if (upgradeTowerIndex == -1)
+                state_addTower(state->towers, &state->towerLen, tileX, tileY, 
+                        currentType, TOWER_DEF[currentType].scale);
+            else
             {
-                int tScale = TOWER_DEF[currentType].scale;
-                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, tScale);
-            }
-            else 
                 state->towers[upgradeTowerIndex].scale += 1;
+                hasUpgradedTowers = true;
+            }
             levelValidated = false;
         }
 
@@ -1941,6 +1949,7 @@ void playground(GameState *state)
                 .towersAllowed = state->home.allowedTowers,
                 .minSolution = state->home.minTowers,
                 .roundingFactor = state->home.roundingFactor,
+                .upgradeAllowed = state->home.upgradeAllowed,
             };
             bool res = state_levelToString(levelStr, sizeof(levelStr), level, state->towers, 
                 copySolution ? state->towerLen : 0);
@@ -1983,9 +1992,19 @@ void playground(GameState *state)
                 state->home.allowedTowers = level.towersAllowed;
                 state->home.minTowers = level.minSolution;
                 state->home.roundingFactor = level.roundingFactor;
+                state->home.upgradeAllowed = level.upgradeAllowed;
                 state->towerLen = towerCnt;
                 memcpy(state->towers, towers, sizeof(towers[0]) * towerCnt);
                 printf("Successfully loaded level from clipboard!\n");
+                hasUpgradedTowers = false;
+                for (unsigned int idx = 0; idx < state->towerLen; ++idx)
+                {
+                    if (state->towers[idx].scale != TOWER_DEF[state->towers[idx].type].scale)
+                    {
+                        hasUpgradedTowers = true;
+                        break;
+                    }
+                }
                 statusText = "Load successful";
                 statusGood = true;
                 statusShowTime = GetTime();
@@ -2031,6 +2050,12 @@ void playground(GameState *state)
 
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
+
+        if (hasUpgradedTowers)
+            GuiSetState(STATE_DISABLED);
+        if(GuiCheckBox((Rectangle){(float)xPos, (float)yPos, 24, 24}, "Upgrade Allowed", &state->home.upgradeAllowed))
+            levelValidated = false;
+        GuiSetState(STATE_NORMAL);
 
         xPos = 4;
         yPos -= BUTTON_SIZE + GUI_SPACING;
