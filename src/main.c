@@ -561,12 +561,18 @@ void state_loadFromLevelDef(GameState *state, LevelDef l, int index)
     state->home.levelIndex = index;
 }
 
-#define LEVEL_STR_VERSION 1
-static const int VERSION_SIZE = 1;
-static const int STRING_LEN_SIZE = 1 + 1;
+#define LEVEL_STR_VERSION 2
+static const int VERSION_SIZE = 1 + 1; // const char + version
+static const int LEVEL_NAME_SIZE = 1;
+#define HEADER_SIZE (VERSION_SIZE + LEVEL_NAME_SIZE)
+#define HEADER_ENC_SIZE (base64_strlen(HEADER_SIZE)-1) // minus 1 for null terminator
+static const int HEALTH_LEN_SIZE = 1; // health
 static const int LEVEL_DEF_SKIP_SIZE = 2 * sizeof(const char*) + sizeof(LevelCat);
 static const int TOWER_LEN_SIZE = 1;
 static const int TOWER_BYTES_SIZE = sizeof(int) * 4;
+#define LEVEL_MIN_SIZE (HEADER_SIZE + HEALTH_LEN_SIZE + sizeof(LevelDef) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE)
+static const char LEVEL_IDENT_CHAR = 'L';
+static const char SOLUTION_IDENT_CHAR = 'S';
 
 bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower towers[], int towerCnt)
 {
@@ -583,20 +589,22 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
         return false;
     if (healthLen > 255)
         return false;
-    size_t byteSize = VERSION_SIZE + STRING_LEN_SIZE + nameLen + healthLen 
-            + sizeof(level) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE + towerLen;
-    if (outputLen < base64_strlen(byteSize))
+    size_t byteSize = LEVEL_MIN_SIZE + healthLen + towerLen; // name is not encoded
+    if (outputLen < base64_strlen(byteSize) + nameLen)
         return false;
     
     unsigned char *bytes = calloc(byteSize, 1);
     assert(bytes != NULL);
     size_t idx = 0;
 
+    if (towerCnt > 0)
+        bytes[idx++] = SOLUTION_IDENT_CHAR;
+    else
+        bytes[idx++] = LEVEL_IDENT_CHAR;
     bytes[idx++] = LEVEL_STR_VERSION;
-
     bytes[idx++] = (unsigned char)nameLen;
-    memcpy(bytes + idx, level.name, nameLen);
-    idx += nameLen;
+    // NOTE (JS, 25.04.26): we split after these 3 bytes (4 encoded) to insert the name in cleartext later
+    // I think this is nice, because you can easily identify level strings by the name
 
     bytes[idx++] = (unsigned char)healthLen;
     memcpy(bytes + idx, level.health, healthLen);
@@ -620,7 +628,28 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
 
     assert(idx == byteSize);
 
-    base64_encode(output, outputLen, bytes, byteSize);
+    const size_t encSize = base64_encode(output, outputLen, bytes, byteSize);
+    if (encSize == 0)
+    {
+        free(bytes);
+        return false;
+    }
+
+    // make room for name
+    memmove(output + nameLen + HEADER_ENC_SIZE, output + HEADER_ENC_SIZE, encSize - HEADER_ENC_SIZE);
+    // replace all whitespace with underscores 
+    // NOTE (JS, 25.04.26): do not change length of name, since we already encoded the length!
+    char *nameDup = strdup(level.name);
+    static const char *whitespace = " \t\r\n";
+    char *whitePos = strpbrk(nameDup, whitespace);
+    while (whitePos != NULL)
+    {
+        *whitePos = '_';
+        whitePos = strpbrk(nameDup, whitespace);
+    }
+    // insert name
+    memcpy(output + 4, nameDup, nameLen);
+    free(nameDup);
 
     free(bytes);
     return true;
@@ -637,27 +666,49 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     assert(towerCnt);
     assert(input);
 
-    const int minSize = VERSION_SIZE + STRING_LEN_SIZE + sizeof(*output) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE;
-    unsigned char bytes[2048] = {0};
-    size_t bytesLen = base64_decode(bytes, sizeof(bytes), input, strlen(input));
-    if (bytesLen == 0)
+    size_t inputLen = strlen(input);
+    if (inputLen < base64_strlen(LEVEL_MIN_SIZE))
         return false;
-    if (bytesLen < minSize)
+
+    unsigned char bytes[2048] = {0};
+    // Format is 4 bytes "header" + name cleartext + rest encoded, so we split it
+    // and just decode the header first
+    size_t bytesLen = base64_decode(bytes, sizeof(bytes), input, HEADER_ENC_SIZE);
+    if (bytesLen == 0)
         return false;
 
     size_t idx = 0;
+    bool isSolution = false;
+    if (bytes[idx] == SOLUTION_IDENT_CHAR)
+        isSolution = true;
+    else if (bytes[idx] != LEVEL_IDENT_CHAR)
+        return false;
+    idx += 1;
+    
     int version = bytes[idx++];
     if (version != LEVEL_STR_VERSION)
         return false;
     
     int nameLen = bytes[idx++];
-    if (nameLen > bytesLen - idx)
-        return false;
     if (nameLen > nameCap)
         return false;
-    memcpy(name, bytes + idx, nameLen);
+    if (nameLen > inputLen - idx)
+        return false;
+    memcpy(name, input + HEADER_ENC_SIZE, nameLen);
     name[nameLen] = 0;
-    idx += nameLen;
+    // NOTE (JS, 25.04.26): This will override all underscores in the original name, 
+    // but that is fine to me...
+    for (int ndx = 0; ndx < nameLen; ++ndx)
+        if (name[ndx] == '_')
+            name[ndx] = ' ';
+
+    // Header finished, decode the rest now
+    idx = 0;
+    input += HEADER_ENC_SIZE + nameLen;
+    inputLen -= HEADER_ENC_SIZE + nameLen;
+    bytesLen = base64_decode(bytes, sizeof(bytes), input, inputLen);
+    if (bytesLen == 0)
+        return false;
 
     if (idx >= bytesLen)
         return false;
