@@ -235,6 +235,9 @@ void state_addTower(Tower *towers, unsigned int *towerLen, int tileX, int tileY,
 // returns true if all entries were added
 bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char *queue, unsigned int count, unsigned int spacing)
 {
+    assert(s);
+    assert(spacing > 0);
+
     unsigned int spawnFrame;
     if (s->queueHead == s->queueTail) // queue is empty -> spawn immediately
         spawnFrame = startFrame;
@@ -840,7 +843,7 @@ void menu(void)
             sceneChange = true;
         }
         yPos += 32;
-        if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 200, 24}, "Playground"))
+        if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 200, 24}, "Editor / Playground"))
         {
             scene = SC_PLAYGROUND;
             sceneChange = true;
@@ -1075,6 +1078,19 @@ void checkPlaceTower(bool *canPlace, int *upgradeIndex,
     }
 }
 
+int countAlive(Enemy *array, unsigned int count)
+{
+    int result = 0;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        if (!array[i].alive)
+            continue;
+
+        ++result;
+    }
+    return result;
+}
+
 void level(GameState *state)
 {
     assert(state);
@@ -1161,14 +1177,7 @@ void level(GameState *state)
 
                 ++frame;
             }
-            aliveCount = 0;
-            for (int i = state->enemiesLen-1; i >= 0; --i)
-            {
-                if (!state->enemies[i].alive)
-                    continue;
-
-                ++aliveCount;
-            }
+            aliveCount = countAlive(state->enemies, state->enemiesLen);
 
             if (state->queueHead == state->queueTail && aliveCount == 0)
             {
@@ -1648,6 +1657,8 @@ ButtonResult GuiToggleEx(Rectangle bounds, const char *text, bool *active)
     return result;
 }
 
+#define STATUS_SHOW_DURATION_S 5.0f
+
 void playground(GameState *state)
 {
     Camera2D camera = { 0 };
@@ -1659,7 +1670,6 @@ void playground(GameState *state)
     unsigned int frame = (unsigned int)-600; // test rollover robustness
     
     int currentType = ET_NONE;
-    bool loadSaveWithTowers = false;
     int editBoxActive = EB_NONE;
 
     Rectangle nameBox = {(float)screenWidth - 124, 4, 120, 24};
@@ -1671,9 +1681,17 @@ void playground(GameState *state)
     Rectangle spacingBox = {(float)screenWidth - 124, 88, 120, 24};
     char spacingText[16] = "120";
     Rectangle queueButton = {(float)screenWidth - 124, 116, 120, 24};
-    Rectangle encodeButton = {(float)screenWidth - 124, 300, 120, 24};
-    Rectangle towerCheckbox = {(float)screenWidth - 124, 328, 24, 24};
+
+    Rectangle validateButton = {(float)screenWidth - 124, 272, 120, 24};
+    Rectangle encodePuzzleButton = {(float)screenWidth - 124, 300, 120, 24};
+    Rectangle encodeSolutionButton = {(float)screenWidth - 124, 328, 120, 24};
     Rectangle decodeButton = {(float)screenWidth - 124, 356, 120, 24};
+    const char *statusText = "";
+    double statusShowTime = 0;
+    bool statusGood = true;
+    bool validateRun = false;
+    bool levelValidated = false;
+
     enum PlaygroundGuiArea {
         TOWERS,
         PRECISION,
@@ -1708,7 +1726,7 @@ void playground(GameState *state)
         {
             state_reset(state);
         }
-        if (IsKeyPressed(KEY_SPACE))
+        if (IsKeyPressed(KEY_SPACE) && editBoxActive == EB_NONE)
         {
             paused = !paused;
         }
@@ -1722,7 +1740,6 @@ void playground(GameState *state)
         if (CheckCollisionPointRec(GetMousePosition(), spacingBox) && IsMouseButtonPressed(0))
             editBoxActive = EB_SPACING;
 
-        // TODO: Optimize this / make a sane version of this check
         int tileX = GetMouseX() / TOWER_SIZE;
         int tileY = GetMouseY() / TOWER_SIZE;
         bool canPlaceTower = editBoxActive == EB_NONE;
@@ -1738,6 +1755,7 @@ void playground(GameState *state)
             }
             else 
                 state->towers[upgradeTowerIndex].scale += 1;
+            levelValidated = false;
         }
 
         // ------------------ Logic ------------------
@@ -1748,6 +1766,28 @@ void playground(GameState *state)
                 level_logic(state, frame);
 
                 ++frame;
+            }
+        }
+        if (validateRun)
+        {
+            int aliveCount = countAlive(state->enemies, state->enemiesLen);
+            if (aliveCount == 0)
+            {
+                validateRun = false;
+                statusShowTime = GetTime();
+                speedLevel = 1;
+                if (state->home.health == HEALTH_DEFAULT)
+                {
+                    levelValidated = true;
+                    state->home.minTowers = state->towerLen;
+                    statusText = "Validation successful, export unlocked";
+                    statusGood = true;
+                }
+                else
+                {
+                    statusText = "Validation failed, successful solve needed";
+                    statusGood = false;
+                }
             }
         }
 
@@ -1761,7 +1801,7 @@ void playground(GameState *state)
         DrawRectangleRec(state->path, WHITE);
 
         // placement preview
-        if (currentType != ET_NONE)
+        if (currentType != ET_NONE && !validateRun)
         {
             DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, canPlaceTower ? GRAY : MAROON);
             if (canPlaceTower)
@@ -1809,14 +1849,22 @@ void playground(GameState *state)
             speedLevel = 12;
             paused = false;
         }
+        if (validateRun)
+        {
+            int textW = MeasureText("VALIDATION IN PROGRESS", FONT_SIZE);
+            DrawText("VALIDATION IN PROGRESS", (screenWidth - textW) / 2, 40, FONT_SIZE, BLACK);
+        }
         if (paused)
         {
             int textW = MeasureText("PAUSED", FONT_SIZE * 2);
-            DrawText("PAUSED", (screenWidth - textW) / 2, 40, FONT_SIZE * 2, BLACK);
+            DrawText("PAUSED", (screenWidth - textW) / 2, 64, FONT_SIZE * 2, BLACK);
         }
 
+        if (validateRun) // Disable all GUI while validating level
+            GuiLock();
+
         GuiLabel((Rectangle){nameBox.x - 60, nameBox.y, 60, nameBox.height}, "Name:");
-        if (GuiTextBox(nameBox, nameText, sizeof(nameBox), editBoxActive == EB_NAME))
+        if (GuiTextBox(nameBox, nameText, sizeof(nameText), editBoxActive == EB_NAME))
         {
             editBoxActive = EB_NONE;
         }
@@ -1824,6 +1872,7 @@ void playground(GameState *state)
         GuiLabel((Rectangle){healthBox.x - 60, healthBox.y, 60, healthBox.height}, "Health:");
         if (GuiTextBox(healthBox, healthText, sizeof(healthText), editBoxActive == EB_HEALTH))
         {
+            levelValidated = false;
             editBoxActive = EB_NONE;
         }
         if (editBoxActive == EB_HEALTH) { GuiLock(); }
@@ -1835,6 +1884,7 @@ void playground(GameState *state)
                 value = 1;
             snprintf(countText, sizeof(countText), "%d", value);
 
+            levelValidated = false;
             editBoxActive = EB_NONE;
         }
         if (editBoxActive == EB_COUNT) { GuiLock(); }
@@ -1846,6 +1896,7 @@ void playground(GameState *state)
                 value = 120;
             snprintf(spacingText, sizeof(spacingText), "%d", value);
 
+            levelValidated = false;
             editBoxActive = EB_NONE;
         }
         if (editBoxActive == EB_SPACING) { GuiLock(); }
@@ -1853,13 +1904,27 @@ void playground(GameState *state)
         {
             int count = atoi(countText);
             int spacing = atoi(spacingText);
-            assert(count > 0);
-            assert(spacing > 0);
-
-            state_addQueueFromString(state, frame, healthText, count, spacing);
+            if (count > 0 && spacing > 0)
+                state_addQueueFromString(state, frame, healthText, count, spacing);
         }
-        GuiCheckBox(towerCheckbox, "with Towers", &loadSaveWithTowers);
-        if (GuiButton(encodeButton, "Copy to Clipboard"))
+
+        if (GuiButton(validateButton, "Validate Puzzle"))
+        {
+            int count = atoi(countText);
+            int spacing = atoi(spacingText);
+            if (count > 0 && spacing > 0)
+            {
+                validateRun = true;
+                state_addQueueFromString(state, frame, healthText, count, spacing);
+                state->home.health = HEALTH_DEFAULT;
+                speedLevel = 12;
+            }
+        }
+        if (!levelValidated)
+            GuiSetState(STATE_DISABLED);
+        bool copyPuzzle = GuiButton(encodePuzzleButton, "Puzzle to Clipboard");
+        bool copySolution = GuiButton(encodeSolutionButton, "Solution to Clipboard");
+        if (copyPuzzle || copySolution)
         {
             int count = atoi(countText);
             int spacing = atoi(spacingText);
@@ -1874,21 +1939,31 @@ void playground(GameState *state)
                 .count = count,
                 .spacing = spacing,
                 .towersAllowed = state->home.allowedTowers,
-                .minSolution = state->home.minTowers, // TODO: add control
+                .minSolution = state->home.minTowers,
                 .roundingFactor = state->home.roundingFactor,
             };
             bool res = state_levelToString(levelStr, sizeof(levelStr), level, state->towers, 
-                loadSaveWithTowers ? state->towerLen : 0);
+                copySolution ? state->towerLen : 0);
             if (res)
             {
                 SetClipboardText(levelStr);
                 printf("Successfully copied level to clipboard!\n");
+                if (copySolution)
+                    statusText = "Solution copied to clipboard";
+                else
+                    statusText = "Level copied to clipboard";
+                statusGood = true;
+                statusShowTime = GetTime();
             }
             else
             {
                 printf("ERROR: Failed to generate level string!\n");
+                statusText = "Failed to encode level";
+                statusGood = false;
+                statusShowTime = GetTime();
             }
         }
+        GuiSetState(STATE_NORMAL);
         if (GuiButton(decodeButton, "Load from Clipboard"))
         {
             const char *clipboard = GetClipboardText();
@@ -1908,21 +1983,26 @@ void playground(GameState *state)
                 state->home.allowedTowers = level.towersAllowed;
                 state->home.minTowers = level.minSolution;
                 state->home.roundingFactor = level.roundingFactor;
-                if (loadSaveWithTowers)
-                {
-                    state->towerLen = towerCnt;
-                    memcpy(state->towers, towers, sizeof(towers[0]) * towerCnt);
-                }
-                else
-                {
-                    state->towerLen = 0;
-                }
+                state->towerLen = towerCnt;
+                memcpy(state->towers, towers, sizeof(towers[0]) * towerCnt);
                 printf("Successfully loaded level from clipboard!\n");
+                statusText = "Load successful";
+                statusGood = true;
+                statusShowTime = GetTime();
             }
             else
             {
                 printf("ERROR: Failed to load level from string!\n");
+                statusText = "Failed to load";
+                statusGood = false;
+                statusShowTime = GetTime();
             }
+            levelValidated = false;
+        }
+        if (statusText[0] != 0 && GetTime() - statusShowTime < STATUS_SHOW_DURATION_S)
+        {
+            int width = MeasureText(statusText, 10);
+            DrawText(statusText, screenWidth - width - 8, screenHeight - 64, 10, statusGood ? DARKGREEN : RED);
         }
 
         int xPos = 4;
@@ -1930,11 +2010,10 @@ void playground(GameState *state)
         char text[64] = "";
         for (int tdx = 0; tdx < ET_EOL; ++tdx)
         {
-            
             if (tdx == ET_ROUND)
-            snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale - 1, 1 / powf(10, (float)TOWER_DEF[tdx].scale - 1));
+                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale - 1, 1 / powf(10, (float)TOWER_DEF[tdx].scale - 1));
             else
-            snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
+                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
             bool active = currentType == tdx;
             if (!FLAG_TEST(state->home.allowedTowers, tdx))
                 GuiSetState(STATE_DISABLED);
@@ -1947,10 +2026,12 @@ void playground(GameState *state)
                 FLAG_TOGGLE(state->home.allowedTowers, tdx);
                 if (active)
                     currentType = ET_NONE;
+                levelValidated = false;
             }
 
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
+
         xPos = 4;
         yPos -= BUTTON_SIZE + GUI_SPACING;
         if (GuiButton((Rectangle){(float)xPos, (float)yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
@@ -1959,10 +2040,12 @@ void playground(GameState *state)
             if (state->home.roundingFactor > 1)
             {
                 state->home.roundingFactor /= 10;
+                levelValidated = false;
             }
             else if (state->home.roundingFactor == 1)
             {
                 state->home.roundingFactor = 0;
+                levelValidated = false;
             }
         }
         if (GuiButton((Rectangle){(float)xPos + (BUTTON_SIZE + GUI_SPACING) / 2, (float)yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
@@ -1971,13 +2054,20 @@ void playground(GameState *state)
             if (state->home.roundingFactor == 0)
             {
                 state->home.roundingFactor = 1;
+                levelValidated = false;
             }
-            else if (state->home.roundingFactor < 1e8)
+            else if (state->home.roundingFactor < 1e5)
             {
                 state->home.roundingFactor *= 10;
+                levelValidated = false;
             }
         }
         xPos += BUTTON_SIZE + GUI_SPACING * 2;
+        if (state->home.minTowers > 0)
+            snprintf(text, sizeof(text), "Par: %d", state->home.minTowers);
+        else
+            strcpy(text, "Par: ??");
+        DrawText(text, screenWidth - 84, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
         if (state->home.roundingFactor == 0)
             snprintf(text, sizeof(text), "Precision: full float");
         else
@@ -1992,14 +2082,7 @@ void playground(GameState *state)
         snprintf(text, sizeof(text), "Towers: %d / %d", state->towerLen, MAX_TOWERS);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;
-        int aliveCount = 0;
-        for (int i = state->enemiesLen-1; i >= 0; --i)
-        {
-            if (!state->enemies[i].alive)
-                continue;
-
-            ++aliveCount;
-        }
+        int aliveCount = countAlive(state->enemies, state->enemiesLen);
         snprintf(text, sizeof(text), "Enemies: %d - (%d / %d)", aliveCount, state->enemiesLen, MAX_ENEMIES);
         DrawText(text, 4, yPos, FONT_SIZE, BLACK);
         yPos += 24;

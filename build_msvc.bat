@@ -43,7 +43,7 @@ set INCLUDES=/I include /I src
 set SOURCES=src\main.c
 set LIBS=lib\raylib.lib
 :: /wd4100 - disable warnings about unused parameters in functions
-set COMMON=/nologo /utf-8 /W4 /wd4100 /external:I include /external:W1
+set COMMON=/nologo /utf-8 /W4 /wd4100 /WX /external:I include /external:W1
 if "%debug%"=="1" (
 	set DEFINES=/DUNICODE /D_UNICODE /D_DEBUG /D_CRT_SECURE_NO_WARNINGS
     set OPTIONS=/Zi /MD /Od
