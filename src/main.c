@@ -18,6 +18,8 @@
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define ALL_BITS_SET ((unsigned int)-1)
+#define FLAG_TEST(v, index) ((v & 1 << index) > 0)
+#define FLAG_TOGGLE(v, index) (v ^= 1 << index)
 
 typedef struct TowerDefault
 {
@@ -344,6 +346,7 @@ Color enemyColor(float health)
 typedef enum EditBox 
 {
     EB_NONE = -1,
+    EB_NAME,
     EB_COUNT,
     EB_HEALTH,
     EB_SPACING,
@@ -1291,7 +1294,7 @@ void level(GameState *state)
         int yPos = screenHeight - BUTTON_SIZE - GUI_SPACING;
         for (int tdx = 0; tdx < ET_EOL; ++tdx)
         {
-            if ((state->home.allowedTowers & 1 << tdx) == 0)
+            if (!FLAG_TEST(state->home.allowedTowers, tdx))
                 continue;
 
             snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
@@ -1577,6 +1580,74 @@ void level_draw(GameState *state)
     }
 }
 
+// Custom button control, returns mouse button when clicked (left = 1, right = 2, middle = 3)
+typedef enum ButtonResult {
+    BT_NONE,
+    BT_HOVER,
+    BT_CLICK_LEFT,
+    BT_CLICK_RIGHT,
+    BT_CLICK_MIDDLE,
+} ButtonResult;
+
+// Toggle Button control
+ButtonResult GuiToggleEx(Rectangle bounds, const char *text, bool *active)
+{
+    ButtonResult result = BT_NONE;
+    GuiState state = guiState;
+
+    bool temp = false;
+    if (active == NULL) active = &temp;
+
+    // Update control
+    //--------------------------------------------------------------------
+    if (!guiLocked && !guiControlExclusiveMode)
+    {
+        Vector2 mousePoint = GetMousePosition();
+
+        // Check toggle button state
+        if (CheckCollisionPointRec(mousePoint, bounds))
+        {
+            result = BT_HOVER;
+            state = STATE_FOCUSED;
+
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) 
+                state = STATE_PRESSED;
+            else if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+            {
+                state = STATE_NORMAL;
+                if (guiState != STATE_DISABLED)
+                    *active = !(*active);
+                result = BT_CLICK_LEFT;
+            }
+            else if (IsMouseButtonReleased(MOUSE_RIGHT_BUTTON))
+                result = BT_CLICK_RIGHT;
+            else if (IsMouseButtonReleased(MOUSE_MIDDLE_BUTTON))
+                result = BT_CLICK_MIDDLE;
+        }
+    }
+    if (guiState == STATE_DISABLED)
+        state = STATE_DISABLED;
+    //--------------------------------------------------------------------
+
+    // Draw control
+    //--------------------------------------------------------------------
+    if (state == STATE_NORMAL)
+    {
+        GuiDrawRectangle(bounds, GuiGetStyle(TOGGLE, BORDER_WIDTH), GetColor(GuiGetStyle(TOGGLE, ((*active)? BORDER_COLOR_PRESSED : (BORDER + state*3)))), GetColor(GuiGetStyle(TOGGLE, ((*active)? BASE_COLOR_PRESSED : (BASE + state*3)))));
+        GuiDrawText(text, GetTextBounds(TOGGLE, bounds), GuiGetStyle(TOGGLE, TEXT_ALIGNMENT), GetColor(GuiGetStyle(TOGGLE, ((*active)? TEXT_COLOR_PRESSED : (TEXT + state*3)))));
+    }
+    else
+    {
+        GuiDrawRectangle(bounds, GuiGetStyle(TOGGLE, BORDER_WIDTH), GetColor(GuiGetStyle(TOGGLE, BORDER + state*3)), GetColor(GuiGetStyle(TOGGLE, BASE + state*3)));
+        GuiDrawText(text, GetTextBounds(TOGGLE, bounds), GuiGetStyle(TOGGLE, TEXT_ALIGNMENT), GetColor(GuiGetStyle(TOGGLE, TEXT + state*3)));
+    }
+
+    if (state == STATE_FOCUSED) GuiTooltip(bounds);
+    //--------------------------------------------------------------------
+
+    return result;
+}
+
 void playground(GameState *state)
 {
     Camera2D camera = { 0 };
@@ -1587,15 +1658,18 @@ void playground(GameState *state)
 
     unsigned int frame = (unsigned int)-600; // test rollover robustness
     
-    int currentType = ET_SUB;
+    int currentType = ET_NONE;
+    bool loadSaveWithTowers = false;
+    int editBoxActive = EB_NONE;
 
-    Rectangle countBox = {(float)screenWidth - 124, 32, 120, 24};
+    Rectangle nameBox = {(float)screenWidth - 124, 4, 120, 24};
+    char nameText[256] = "My cool puzzle";
+    Rectangle healthBox = {(float)screenWidth - 124, 32, 120, 24};
+    char healthText[256] = "1,5,1e2,-1e2,-42,-1,0.1,0.5,1e-2";
+    Rectangle countBox = {(float)screenWidth - 124, 60, 120, 24};
     char countText[16] = "3";
-    Rectangle healthBox = {(float)screenWidth - 124, 60, 120, 24};
-    char healthText[256] = "1,2,3,-3,-2,-1,0.1,0.5,0.9";
     Rectangle spacingBox = {(float)screenWidth - 124, 88, 120, 24};
     char spacingText[16] = "120";
-    int editBoxActive = EB_NONE;
     Rectangle queueButton = {(float)screenWidth - 124, 116, 120, 24};
     Rectangle encodeButton = {(float)screenWidth - 124, 300, 120, 24};
     Rectangle towerCheckbox = {(float)screenWidth - 124, 328, 24, 24};
@@ -1616,7 +1690,6 @@ void playground(GameState *state)
     bool paused = false;
     bool sceneChange = false;
     int speedLevel = 1;
-    bool loadSaveWithTowers = false;
 
     // Main game loop
     while (!WindowShouldClose() && !sceneChange)
@@ -1640,6 +1713,8 @@ void playground(GameState *state)
             paused = !paused;
         }
 
+        if (CheckCollisionPointRec(GetMousePosition(), nameBox) && IsMouseButtonPressed(0))
+            editBoxActive = EB_NAME;
         if (CheckCollisionPointRec(GetMousePosition(), countBox) && IsMouseButtonPressed(0))
             editBoxActive = EB_COUNT;
         if (CheckCollisionPointRec(GetMousePosition(), healthBox) && IsMouseButtonPressed(0))
@@ -1740,26 +1815,18 @@ void playground(GameState *state)
             DrawText("PAUSED", (screenWidth - textW) / 2, 40, FONT_SIZE * 2, BLACK);
         }
 
-        btnPos = screenWidth - GUI_SPACING - 60;
-        if (GuiButton((Rectangle){(float)btnPos, 4, 60, 24}, "Primes"))
+        GuiLabel((Rectangle){nameBox.x - 60, nameBox.y, 60, nameBox.height}, "Name:");
+        if (GuiTextBox(nameBox, nameText, sizeof(nameBox), editBoxActive == EB_NAME))
         {
-            healthText[0] = 0;
-            strncat(healthText, "2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131", sizeof(healthText) - 1);
+            editBoxActive = EB_NONE;
         }
-        btnPos -= 60 + GUI_SPACING;
-        if (GuiButton((Rectangle){(float)btnPos, 4, 60, 24}, "Log 10"))
+        if (editBoxActive == EB_NAME) { GuiLock(); }
+        GuiLabel((Rectangle){healthBox.x - 60, healthBox.y, 60, healthBox.height}, "Health:");
+        if (GuiTextBox(healthBox, healthText, sizeof(healthText), editBoxActive == EB_HEALTH))
         {
-            healthText[0] = 0;
-            strncat(healthText, "1,10,100,1000,1e5,1e6,1e7,1e8,1e9,1e10", sizeof(healthText) - 1);
+            editBoxActive = EB_NONE;
         }
-        btnPos -= 60 + GUI_SPACING;
-        if (GuiButton((Rectangle){(float)btnPos, 4, 60, 24}, "+/-"))
-        {
-            healthText[0] = 0;
-            strncat(healthText, "1,-2,3,-4,5,-6,7,-8,9,-10,11,-12,13,-14,15,-16,17,-18,19,-20,21,-22,23,-24,25,-26,27,-28,29,-30,31,-32", sizeof(healthText) - 1);
-        }
-        btnPos -= 60 + GUI_SPACING;
-
+        if (editBoxActive == EB_HEALTH) { GuiLock(); }
         GuiLabel((Rectangle){countBox.x - 60, countBox.y, 60, countBox.height}, "Count:");
         if (GuiTextBox(countBox, countText, sizeof(countText), editBoxActive == EB_COUNT))
         {
@@ -1771,12 +1838,6 @@ void playground(GameState *state)
             editBoxActive = EB_NONE;
         }
         if (editBoxActive == EB_COUNT) { GuiLock(); }
-        GuiLabel((Rectangle){healthBox.x - 60, healthBox.y, 60, healthBox.height}, "Health:");
-        if (GuiTextBox(healthBox, healthText, sizeof(healthText), editBoxActive == EB_HEALTH))
-        {
-            editBoxActive = EB_NONE;
-        }
-        if (editBoxActive == EB_HEALTH) { GuiLock(); }
         GuiLabel((Rectangle){spacingBox.x - 60, spacingBox.y, 60, spacingBox.height}, "Spacing:");
         if (GuiTextBox(spacingBox, spacingText, sizeof(spacingText), editBoxActive == EB_SPACING))
         {
@@ -1807,12 +1868,12 @@ void playground(GameState *state)
 
             char levelStr[2048] = "";
             LevelDef level = {
-                .name = "", // TODO: add control
+                .name = nameText,
                 .cat = LC_NATURAL,
                 .health = healthText,
                 .count = count,
                 .spacing = spacing,
-                .towersAllowed = state->home.allowedTowers, // TODO: add control
+                .towersAllowed = state->home.allowedTowers,
                 .minSolution = state->home.minTowers, // TODO: add control
                 .roundingFactor = state->home.roundingFactor,
             };
@@ -1832,7 +1893,7 @@ void playground(GameState *state)
         {
             const char *clipboard = GetClipboardText();
             LevelDef level = {0};
-            char name[256] = "";
+            char name[sizeof(nameText)] = "";
             char health[sizeof(healthText)] = "";
             Tower towers[MAX_TOWERS] = {0};
             unsigned int towerCnt = 0;
@@ -1840,7 +1901,7 @@ void playground(GameState *state)
                     towers, &towerCnt, clipboard);
             if (res)
             {
-                // TODO: name
+                strcpy(nameText, name);
                 strcpy(healthText, health);
                 sprintf(countText, "%d", level.count);
                 sprintf(spacingText, "%d", level.spacing);
@@ -1869,19 +1930,25 @@ void playground(GameState *state)
         char text[64] = "";
         for (int tdx = 0; tdx < ET_EOL; ++tdx)
         {
-            if ((state->home.allowedTowers & 1 << tdx) == 0)
-                continue;
-
+            
             if (tdx == ET_ROUND)
-                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale - 1, 1 / powf(10, (float)TOWER_DEF[tdx].scale - 1));
+            snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale - 1, 1 / powf(10, (float)TOWER_DEF[tdx].scale - 1));
             else
-                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
+            snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
             bool active = currentType == tdx;
-            GuiToggle((Rectangle){ (float)xPos, (float)yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
+            if (!FLAG_TEST(state->home.allowedTowers, tdx))
+                GuiSetState(STATE_DISABLED);
+            ButtonResult res = GuiToggleEx((Rectangle){ (float)xPos, (float)yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
+            GuiSetState(STATE_NORMAL);
             if (active)
-            {
                 currentType = tdx;
+            if (res == BT_CLICK_RIGHT)
+            {
+                FLAG_TOGGLE(state->home.allowedTowers, tdx);
+                if (active)
+                    currentType = ET_NONE;
             }
+
             xPos += BUTTON_SIZE + GUI_SPACING;
         }
         xPos = 4;
