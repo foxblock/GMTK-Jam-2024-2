@@ -84,6 +84,7 @@ typedef struct Home // also level parameters
     int roundingFactor;
     int score;
     int levelIndex;
+    bool upgradeAllowed;
 } Home;
 
 #define ENEMY_SIZE 20
@@ -381,6 +382,7 @@ typedef struct LevelDef
     unsigned int towersAllowed;
     int minSolution;
     int roundingFactor;
+    bool upgradeAllowed;
 } LevelDef;
 
 const LevelDef LEVELS[] = {
@@ -495,6 +497,7 @@ void state_loadFromLevelDef(GameState *state, LevelDef l, int index)
     state->home.allowedTowers = l.towersAllowed;
     state->home.minTowers = l.minSolution;
     state->home.roundingFactor = l.roundingFactor;
+    state->home.upgradeAllowed = l.upgradeAllowed;
     state->home.levelIndex = index;
 }
 
@@ -1142,7 +1145,7 @@ void level(GameState *state)
                 int tScale = TOWER_DEF[currentType].scale;
                 state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, tScale);
             }
-            else 
+            else if (state->home.upgradeAllowed)
                 state->towers[upgradeTowerIndex].scale += 1;
         }
 
