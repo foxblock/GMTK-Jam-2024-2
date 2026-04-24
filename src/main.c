@@ -17,6 +17,24 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define ALL_BITS_SET ((unsigned int)-1)
+
+typedef struct TowerDefault
+{
+    const char *text;
+    int scale;
+    bool (*canTarget)(float health);
+    bool canUpgrade;
+} TowerDefault;
+
+static bool _target_all(float health) { return true; }
+static bool _target_positive(float health) { return health > 0; }
+static bool _target_tan(float health)
+{
+    if (fabsf(health - (int)health) > FLT_EPSILON)
+        return true;
+    return ((int)health % 90 != 0) || ((int)health % 180 == 0);
+}
 
 typedef enum EquationType 
 {
@@ -36,23 +54,6 @@ typedef enum EquationType
     ET_TAN,
     ET_EOL,
 } EquationType;
-
-typedef struct TowerDefault
-{
-    const char *text;
-    int scale;
-    bool (*canTarget)(float health);
-    bool canUpgrade;
-} TowerDefault;
-
-static bool _target_all(float health) { return true; }
-static bool _target_positive(float health) { return health > 0; }
-static bool _target_tan(float health)
-{
-    if (fabsf(health - (int)health) > FLT_EPSILON)
-        return true;
-    return ((int)health % 90 != 0) || ((int)health % 180 == 0);
-}
 
 const TowerDefault TOWER_DEF[] = {
     [ET_NONE] = { "none", 0, NULL, false },
@@ -79,7 +80,7 @@ typedef struct Home // also level parameters
     Rectangle rect;
     int health;
     unsigned int allowedTowers; // bit mask of EquationType entries
-    int minTowers;
+    unsigned int minTowers;
     int roundingFactor;
     int score;
     int levelIndex;
@@ -122,7 +123,7 @@ typedef struct Tower
     Vector2 tile;
     EquationType type;
     int scale;
-    int range;
+    float range;
     unsigned int lastShot; // in frames
     unsigned int cooldown; // in frames
     int enemiesShot[TOWER_LIST_SIZE];
@@ -130,7 +131,7 @@ typedef struct Tower
 } Tower;
 
 #define SAVED_MSG_LIFETIME 60
-#define SAVED_MOVEY_PER_FRAME -0.2
+#define SAVED_MOVEY_PER_FRAME -0.2f
 typedef struct SavedMessage
 {
     Vector2 pos;
@@ -140,6 +141,7 @@ typedef struct SavedMessage
 typedef struct GameState
 {
     Home home;
+    Rectangle path;
 
     Tower *towers;
     unsigned int towerLen;
@@ -169,8 +171,9 @@ void state_init(GameState *s)
     s->home = (Home){
         .rect = {50, 200, TOWER_SIZE, TOWER_SIZE},
         .health = 10,
-        .allowedTowers = -1, // all by default
+        .allowedTowers = ALL_BITS_SET, // all by default
     };
+    s->path = (Rectangle){100, 200, GetScreenWidth() - 100.f, TOWER_SIZE};
 
     s->towers = calloc(MAX_TOWERS, sizeof(s->towers[0]));
     s->towerLen = 0;
@@ -215,9 +218,9 @@ void state_reset(GameState *s)
 void state_addTower(Tower *towers, unsigned int *towerLen, int tileX, int tileY, int type, int scale)
 {
     towers[*towerLen] = (Tower){
-        .rect = {tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
-        .center = {(tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE},
-        .tile = {tileX, tileY},
+        .rect = {(float)tileX * TOWER_SIZE, (float)tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE},
+        .center = {(tileX + 0.5f) * TOWER_SIZE, (tileY + 0.5f) * TOWER_SIZE},
+        .tile = {(float)tileX, (float)tileY},
         .type = type,
         .scale = scale,
         .range = TOWER_RANGE,
@@ -245,13 +248,13 @@ bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char 
             if (queueIsFull)
                 return false;
 
-            float value = atof(pos);
+            float value = (float)atof(pos);
             if (value == 0 || !isfinite(value))
                 continue;
 
             s->queue[s->queueHead % QUEUE_SIZE] = (EnemyQueue){
                 .spawnFrame = spawnFrame,
-                .health = atof(pos),
+                .health = (float)atof(pos),
             };
             ++s->queueHead;
             spawnFrame += spacing;
@@ -287,7 +290,7 @@ TakeHealthResult takeHealth(Enemy *e, Tower *t, int rounding)
         case ET_LOG_E: e->health = logf(e->health); break;
         case ET_LOG_2: e->health = log2f(e->health); break;
         case ET_LOG_10: e->health = log10f(e->health); break;
-        case ET_ROUND: e->health = roundf(e->health * powf(10, t->scale - 1)) / powf(10, t->scale - 1); break;
+        case ET_ROUND: e->health = roundf(e->health * powf(10, (float)t->scale - 1)) / powf(10, (float)t->scale - 1); break;
         case ET_SIN: e->health = sinf(DEG2RAD * e->health); break;
         case ET_COS: e->health = cosf(DEG2RAD * e->health); break;
         case ET_TAN: e->health = tanf(DEG2RAD * e->health); break;
@@ -517,14 +520,14 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
         return false;
     if (healthLen > 255)
         return false;
-    int byteSize = VERSION_SIZE + STRING_LEN_SIZE + nameLen + healthLen 
+    size_t byteSize = VERSION_SIZE + STRING_LEN_SIZE + nameLen + healthLen 
             + sizeof(level) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE + towerLen;
     if (outputLen < base64_strlen(byteSize))
         return false;
     
     unsigned char *bytes = calloc(byteSize, 1);
     assert(bytes != NULL);
-    int idx = 0;
+    size_t idx = 0;
 
     bytes[idx++] = LEVEL_STR_VERSION;
 
@@ -545,8 +548,8 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
     for (int t = 0; t < towerCnt; ++t)
     {
         int *bytesStart = (int*)(bytes + idx);
-        bytesStart[0] = towers[t].tile.x;
-        bytesStart[1] = towers[t].tile.y;
+        bytesStart[0] = (int)towers[t].tile.x;
+        bytesStart[1] = (int)towers[t].tile.y;
         bytesStart[2] = towers[t].type;
         bytesStart[3] = towers[t].scale;
         idx += TOWER_BYTES_SIZE;
@@ -561,7 +564,7 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
 }
 
 bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *health, size_t healthCap,
-    Tower towers[], int *towerCnt, 
+    Tower towers[], unsigned int *towerCnt, 
     const char *input)
 {
     assert(output);
@@ -573,13 +576,13 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
 
     const int minSize = VERSION_SIZE + STRING_LEN_SIZE + sizeof(*output) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE;
     unsigned char bytes[2048] = {0};
-    int bytesLen = base64_decode(bytes, sizeof(bytes), input, strlen(input));
+    size_t bytesLen = base64_decode(bytes, sizeof(bytes), input, strlen(input));
     if (bytesLen == 0)
         return false;
     if (bytesLen < minSize)
         return false;
 
-    int idx = 0;
+    size_t idx = 0;
     int version = bytes[idx++];
     if (version != LEVEL_STR_VERSION)
         return false;
@@ -643,7 +646,7 @@ bool load_progress(Savegame *data, const char *filename)
     if (f == NULL)
         return false;
     
-    int res = fread(&data->progress, sizeof(data->progress), 1, f);
+    size_t res = fread(&data->progress, sizeof(data->progress), 1, f);
     if (res == 0)
         return false;
     res = fread(data->scores, sizeof(data->scores[0]), ARRAY_SIZE(data->scores), f);
@@ -662,7 +665,7 @@ bool save_progress(Savegame *data, const char *filename)
     if (f == NULL)
         return false;
     
-    int res = fwrite(data, sizeof(*data), 1, f);
+    size_t res = fwrite(data, sizeof(*data), 1, f);
     if (res != sizeof(*data))
         return false;
 
@@ -674,7 +677,7 @@ const int screenHeight = 450;
 Scene scene;
 Savegame save;
 RenderTexture2D screen;
-float scale = 1.0f;
+float scale = 1.f;
 
 void menu(void);
 void tutorial(void);
@@ -721,7 +724,7 @@ int main(void)
                 break;
             case SC_LEVEL_SELECT:
                 state_reset(&state);
-                state.home.allowedTowers = -1;
+                state.home.allowedTowers = ALL_BITS_SET;
                 state.home.roundingFactor = 100;
                 level_select(&state);
                 break;
@@ -730,7 +733,7 @@ int main(void)
                 break;
             case SC_PLAYGROUND:
                 state_reset(&state);
-                state.home.allowedTowers = -1;
+                state.home.allowedTowers = ALL_BITS_SET;
                 state.home.roundingFactor = 100;
                 playground(&state);
                 break;
@@ -757,7 +760,7 @@ void UpdateGlobalScaling()
 {
     scale = MIN((float)GetScreenWidth()/screenWidth, (float)GetScreenHeight()/screenHeight);
 
-    SetMouseOffset(-(GetScreenWidth() - (screenWidth*scale))*0.5f, -(GetScreenHeight() - (screenHeight*scale))*0.5f);
+    SetMouseOffset((int)(-(GetScreenWidth() - screenWidth * scale) / 2.f), (int)(-(GetScreenHeight() - screenHeight * scale) / 2.f));
     SetMouseScale(1/scale, 1/scale);
 }
 
@@ -768,9 +771,9 @@ void DrawScreenScaled()
     ClearBackground(BLACK);     // Clear screen background
 
     // Draw render texture to screen, properly scaled
-    DrawTexturePro(screen.texture, (Rectangle){ 0.0f, 0.0f, (float)screenWidth, (float)-screenHeight },
-                    (Rectangle){ (GetScreenWidth() - ((float)screenWidth*scale))*0.5f, (GetScreenHeight() - ((float)screenHeight*scale))*0.5f,
-                    (float)screenWidth*scale, (float)screenHeight*scale }, (Vector2){ 0, 0 }, 0.0f, WHITE);
+    DrawTexturePro(screen.texture, (Rectangle){ 0, 0, (float)screenWidth, (float)-screenHeight },
+                    (Rectangle){ (GetScreenWidth() - screenWidth * scale) / 2.f, (GetScreenHeight() - screenHeight * scale) / 2.f,
+                    screenWidth * scale, screenHeight * scale }, (Vector2){ 0, 0 }, 0, WHITE);
 
     EndDrawing();
 }
@@ -779,10 +782,10 @@ void menu(void)
 {
     bool sceneChange = false;
     float health[] = {1e7, 0.25, -3};
-    Vector2 pos[ARRAY_SIZE(health)] = {
-        { screenWidth / 2 - 100, 190 },
-        { screenWidth / 2, 190 },
-        { screenWidth / 2 + 100, 190 },
+    Vector2 enemyPos[ARRAY_SIZE(health)] = {
+        { screenWidth / 2.f - 100, 190.f },
+        { screenWidth / 2.f, 190.f },
+        { screenWidth / 2.f + 100, 190.f },
     };
 
     // Main game loop
@@ -804,7 +807,7 @@ void menu(void)
         
         for (int i = 0; i < ARRAY_SIZE(health); ++i)
         {
-            DrawCircleV(pos[i], ENEMY_SIZE * 2, enemyColor(health[i]));
+            DrawCircleV(enemyPos[i], ENEMY_SIZE * 2, enemyColor(health[i]));
             // %g is confusing. the precision option seems to specify the max total number of
             // significant digits (%.3g of 10.555 prints 10.6, while 0.555 prints 0.555).
             // Sometimes it will round, sometimes it won't (%.3g of 1.555 prints 1.55).
@@ -812,51 +815,51 @@ void menu(void)
             int fontSize = FONT_SIZE;
             textW = MeasureText(text, fontSize);
             DrawText(text, 
-                pos[i].x - textW / 2,
-                pos[i].y - fontSize / 2,
+                (int)(enemyPos[i].x - textW / 2),
+                (int)(enemyPos[i].y - fontSize / 2),
                 fontSize,
                 BLACK);
         }
 
         int yPos = 260;
-        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Tutorial"))
+        if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 200, 24}, "Tutorial"))
         {
             scene = SC_TURORIAL;
             sceneChange = true;
         }
         yPos += 32;
-        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Level select"))
+        if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 200, 24}, "Level select"))
         {
             scene = SC_LEVEL_SELECT;
             sceneChange = true;
         }
         yPos += 32;
-        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Playground"))
+        if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 200, 24}, "Playground"))
         {
             scene = SC_PLAYGROUND;
             sceneChange = true;
         }
         yPos += 32;
-        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 96, 24}, "Size 1x"))
+        if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 96, 24}, "Size 1x"))
         {
             int w = GetScreenWidth();
             int h = GetScreenHeight();
-            Vector2 pos = GetWindowPosition();
+            Vector2 windowPos = GetWindowPosition();
             SetWindowSize(screenWidth, screenHeight);
-            SetWindowPosition(pos.x + (w - screenWidth) / 2, pos.y + (h - screenHeight) / 2);
+            SetWindowPosition((int)windowPos.x + (w - screenWidth) / 2, (int)windowPos.y + (h - screenHeight) / 2);
             UpdateGlobalScaling();
         }
-        if (GuiButton((Rectangle){screenWidth / 2 + 4, yPos, 96, 24}, "Size 2x"))
+        if (GuiButton((Rectangle){screenWidth / 2.f + 4, (float)yPos, 96, 24}, "Size 2x"))
         {
             int w = GetScreenWidth();
             int h = GetScreenHeight();
-            Vector2 pos = GetWindowPosition();
+            Vector2 windowPos = GetWindowPosition();
             SetWindowSize(screenWidth * 2, screenHeight * 2);
-            SetWindowPosition(pos.x + (w - screenWidth*2) / 2, pos.y + (h - screenHeight*2) / 2);
+            SetWindowPosition((int)windowPos.x + (w - screenWidth*2) / 2, (int)windowPos.y + (h - screenHeight*2) / 2);
             UpdateGlobalScaling();
         }
         yPos += 32;
-        if (GuiButton((Rectangle){screenWidth / 2 - 100, yPos, 200, 24}, "Exit"))
+        if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 200, 24}, "Exit"))
         {
             scene = SC_EXIT;
             sceneChange = true;
@@ -923,7 +926,7 @@ void tutorial(void)
         yPos += FONT_SIZE + spacing * 3;
         DrawText("THANKS FOR PLAYING", 16, yPos, FONT_SIZE, BLACK);
 
-        if (GuiButton((Rectangle){screenWidth - 124, screenHeight - 28, 120, 24}, "Got it!"))
+        if (GuiButton((Rectangle){(float)screenWidth - 124, (float)screenHeight - 28, 120, 24}, "Got it!"))
         {
             scene = SC_MENU;
             sceneChange = true;
@@ -994,7 +997,7 @@ void level_select(GameState *state)
                 if (i > save.progress)
                     GuiSetState(STATE_DISABLED);
             }
-            if (GuiButton((Rectangle){xPos, yPos, 200, 24}, text))
+            if (GuiButton((Rectangle){(float)xPos, (float)yPos, 200, 24}, text))
             {
                 state_loadFromLevelDef(state, l, i);
                 scene = SC_LEVEL;
@@ -1008,12 +1011,12 @@ void level_select(GameState *state)
 
 
         GuiSetState(STATE_NORMAL);
-        if (GuiButton((Rectangle){screenWidth - 124, screenHeight - 28, 120, 24}, "Back"))
+        if (GuiButton((Rectangle){(float)screenWidth - 124, (float)screenHeight - 28, 120, 24}, "Back"))
         {
             scene = SC_MENU;
             sceneChange = true;
         }
-        if (GuiButton((Rectangle){screenWidth - 248, screenHeight - 28, 120, 24}, unlockAll ? "You sure?" : "Unlock all"))
+        if (GuiButton((Rectangle){(float)screenWidth - 248, (float)screenHeight - 28, 120, 24}, unlockAll ? "You sure?" : "Unlock all"))
         {
             if (!unlockAll)
                 unlockAll = true;
@@ -1029,22 +1032,64 @@ void level_select(GameState *state)
     }
 }
 
+void checkPlaceTower(bool *canPlace, int *upgradeIndex, 
+    GameState *state, Vector2 pos, EquationType selectedType, Rectangle *guiRects, int guiRectCount)
+{
+    assert(canPlace);
+    assert(state);
+
+    if (!*canPlace)
+        return;
+
+    if (selectedType == ET_NONE) { *canPlace = false; return; }
+    if (CheckCollisionPointRec(pos, state->path)) { *canPlace = false; return; }
+    if (CheckCollisionPointRec(pos, state->home.rect))  { *canPlace = false; return; }
+
+    for (int idx = 0; idx < guiRectCount; ++idx)
+    {
+        if (CheckCollisionPointRec(pos, guiRects[idx]))
+        {
+            *canPlace = false;
+            return;
+        }
+    }
+
+    for (unsigned int i = 0; i < state->towerLen; ++i) {
+        if (CheckCollisionPointRec(pos, state->towers[i].rect))
+        {
+            EquationType typeAtMouse = state->towers[i].type;
+            if (typeAtMouse != selectedType)
+                *canPlace = false;
+            else if (!TOWER_DEF[typeAtMouse].canUpgrade)
+                *canPlace = false;
+            else
+                *upgradeIndex = i;
+            return;
+        }
+    }
+}
+
 void level(GameState *state)
 {
     assert(state);
     assert(state->queueHead != state->queueTail);
 
     Camera2D camera = { 0 };
-    camera.target = (Vector2){ screenWidth / 2, screenHeight / 2 };
-    camera.offset = (Vector2){ screenWidth/2.0f, screenHeight/2.0f };
-    camera.rotation = 0.0f;
-    camera.zoom = 1.0f;
+    camera.target = (Vector2){ screenWidth/2.f, screenHeight/2.f };
+    camera.offset = (Vector2){ screenWidth/2.f, screenHeight/2.f };
+    camera.rotation = 0.f;
+    camera.zoom = 1.f;
 
-    unsigned int frame = -300; // test rollover robustness
+    unsigned int frame = (unsigned int)-300; // test rollover robustness
 
-    Rectangle path = {100, 200, screenWidth - 100, TOWER_SIZE};
-    Rectangle guiArea = {0, screenHeight - TOWER_SIZE - 1, screenWidth, TOWER_SIZE + 1};
-    Rectangle guiAreaTop = {0, 0, screenWidth, TOWER_SIZE + 1};
+    enum LevelGuiArea {
+        TOWERS,
+        SPEED_CONTROL,
+    };
+    Rectangle guiAreas[] = {
+        [TOWERS] = {0, (float)screenHeight - TOWER_SIZE - 1, (float)screenWidth, TOWER_SIZE + 1},
+        [SPEED_CONTROL] = {0, 0, (float)screenWidth, TOWER_SIZE + 1},
+    };
 
     int currentType = ET_NONE;
     bool paused = false;
@@ -1082,28 +1127,23 @@ void level(GameState *state)
             paused = !paused;
         }
 
-        bool canPlaceTower = !gameEnded;
-
-        canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
-        canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->home.rect);
-        canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
-        canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiAreaTop);
-
-        if (canPlaceTower)
-        {
-            for (int i = 0; i < state->towerLen; ++i) {
-                canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->towers[i].rect);
-            }
-        }
-
         int tileX = GetMouseX() / TOWER_SIZE;
         int tileY = GetMouseY() / TOWER_SIZE;
-        if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower && currentType != ET_NONE)
+        bool canPlaceTower = !gameEnded;
+        int upgradeTowerIndex = -1;
+
+        checkPlaceTower(&canPlaceTower, &upgradeTowerIndex, state, GetMousePosition(), currentType,
+                guiAreas, ARRAY_SIZE(guiAreas));
+
+        if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower)
         {
-            int scale = 1;
-            if (currentType == ET_MULT || currentType == ET_DIV)
-                scale = 2;
-            state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, scale);
+            if (upgradeTowerIndex == -1)
+            {
+                int tScale = TOWER_DEF[currentType].scale;
+                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, tScale);
+            }
+            else 
+                state->towers[upgradeTowerIndex].scale += 1;
         }
 
         // ------------------ Logic ------------------
@@ -1160,7 +1200,7 @@ void level(GameState *state)
 
         BeginMode2D(camera);
 
-        DrawRectangleRec(path, WHITE);
+        DrawRectangleRec(state->path, WHITE);
 
         // placement preview
         if (currentType != ET_NONE && !gameEnded)
@@ -1168,7 +1208,7 @@ void level(GameState *state)
             DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, canPlaceTower ? GRAY : MAROON);
             if (canPlaceTower)
             {
-                DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, GRAY);
+                DrawCircleLines((int)((tileX + 0.5f) * TOWER_SIZE), (int)((tileY + 0.5f) * TOWER_SIZE), TOWER_RANGE, GRAY);
             }
         }
 
@@ -1179,7 +1219,7 @@ void level(GameState *state)
         const int ePosY = 4 + ENEMY_SIZE;
         char text[64] = "";
         DrawText("Queue:", 4, ePosY - 4, 10, BLACK);
-        for (int i = state->queueTail; i < state->queueHead; ++i)
+        for (unsigned int i = state->queueTail; i < state->queueHead; ++i)
         {
             EnemyQueue *q = state->queue + i;
             
@@ -1211,11 +1251,11 @@ void level(GameState *state)
 
         int btnPos = screenWidth - (GUI_SPACING + 24) * 4;
         bool speedBtnActive = paused;
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
         paused = speedBtnActive;
         btnPos += 24 + GUI_SPACING;
         speedBtnActive = (speedLevel == 1 && !paused);
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PLAY, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PLAY, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
             speedLevel = 1;
@@ -1223,7 +1263,7 @@ void level(GameState *state)
         }
         btnPos += 24 + GUI_SPACING;
         speedBtnActive = (speedLevel == 4 && !paused);
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
             speedLevel = 4;
@@ -1231,7 +1271,7 @@ void level(GameState *state)
         }
         btnPos += 24 + GUI_SPACING;
         speedBtnActive = (speedLevel == 12 && !paused);
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
             speedLevel = 12;
@@ -1253,7 +1293,7 @@ void level(GameState *state)
 
             snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
             bool active = currentType == tdx;
-            GuiToggle((Rectangle){ xPos, yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
+            GuiToggle((Rectangle){ (float)xPos, (float)yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
             if (active)
             {
                 currentType = tdx;
@@ -1263,7 +1303,8 @@ void level(GameState *state)
 
         snprintf(text, sizeof(text), "Par: %d", state->home.minTowers);
         DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE * 2 - GUI_SPACING * 2, FONT_SIZE, BLACK);
-        snprintf(text, sizeof(text), "Precision: %.*f", (int)log10f(state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
+        snprintf(text, sizeof(text), "Precision: %.*f", 
+                (int)log10f((float)state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
         DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
         
     #ifdef _DEBUG
@@ -1307,7 +1348,7 @@ void level(GameState *state)
                 DrawText("You lose :(", (screenWidth - textW) / 2, 100, 40, BLACK);
             }
 
-            if (GuiButton((Rectangle){screenWidth / 2 - 120, 212, 116, 24}, "Try again"))
+            if (GuiButton((Rectangle){screenWidth / 2.f - 120, 212, 116, 24}, "Try again"))
             {
                 state_reset(state);
                 memcpy(state->queue, queueBackup, QUEUE_SIZE * sizeof(queueBackup[0]));
@@ -1315,7 +1356,7 @@ void level(GameState *state)
                 frame = 0;
                 gameEnded = false;
             }
-            if (GuiButton((Rectangle){screenWidth / 2 + 4, 212, 116, 24}, "Go to level select"))
+            if (GuiButton((Rectangle){screenWidth / 2.f + 4, 212, 116, 24}, "Go to level select"))
             {
                 scene = SC_LEVEL_SELECT;
                 sceneChange = true;
@@ -1330,14 +1371,14 @@ void level(GameState *state)
 
 void level_logic(GameState *state, unsigned int frame)
 {
-    for (int i_enemy = 0; i_enemy < state->enemiesLen; ++i_enemy)
+    for (unsigned int i_enemy = 0; i_enemy < state->enemiesLen; ++i_enemy)
     {
         Enemy *e = state->enemies + i_enemy;
         if (!e->alive)
             continue;
 
         // tower in range -> shoot
-        for (int i_tower = 0; i_tower < state->towerLen; ++i_tower)
+        for (unsigned int i_tower = 0; i_tower < state->towerLen; ++i_tower)
         {
             Tower *t = state->towers + i_tower;
             if (frame - t->lastShot < t->cooldown)
@@ -1388,7 +1429,7 @@ void level_logic(GameState *state, unsigned int frame)
 
         e->pos = Vector2Add(e->pos, e->speed);
     }
-    for (int i_shot = state->shotTail; i_shot != state->shotHead; ++i_shot)
+    for (unsigned int i_shot = state->shotTail; i_shot != state->shotHead; ++i_shot)
     {
         Shot *s = state->shots + (i_shot % MAX_SIMUL_SHOTS);
 
@@ -1401,7 +1442,7 @@ void level_logic(GameState *state, unsigned int frame)
         --s->shotLife;
     }
     // spawn new enemies
-    for (int i_queue = state->queueTail; i_queue != state->queueHead; ++i_queue)
+    for (unsigned int i_queue = state->queueTail; i_queue != state->queueHead; ++i_queue)
     {
         EnemyQueue e = state->queue[i_queue % QUEUE_SIZE];
         // check if frame is in the future (with rollover)
@@ -1410,8 +1451,8 @@ void level_logic(GameState *state, unsigned int frame)
 
         assert(state->enemiesLen < MAX_ENEMIES);
         state->enemies[state->enemiesLen++] = (Enemy){
-            .pos = {screenWidth + 50, screenHeight / 2},
-            .speed = {-0.5, 0},
+            .pos = {(float)screenWidth + 50, screenHeight / 2.f},
+            .speed = {-0.5f, 0},
             .health = e.health,
             .alive = true,
         };
@@ -1430,12 +1471,12 @@ void level_draw(GameState *state)
     // Towers
     char text[64] = "";
     int textWidthPixels = 0;
-    for (int i = 0; i < state->towerLen; ++i) 
+    for (unsigned int i = 0; i < state->towerLen; ++i) 
     {
         Tower t = state->towers[i];
         DrawRectangleRec(t.rect, DARKGRAY);
         if (t.type == ET_ROUND)
-            snprintf(text, sizeof(text), TOWER_DEF[t.type].text, t.scale-1, 1.0f / powf(10, t.scale - 1));
+            snprintf(text, sizeof(text), TOWER_DEF[t.type].text, t.scale-1, 1 / powf(10, (float)t.scale - 1));
         else
             snprintf(text, sizeof(text), TOWER_DEF[t.type].text, t.scale);
         int fontSize = FONT_SIZE;
@@ -1446,8 +1487,8 @@ void level_draw(GameState *state)
             textWidthPixels = MeasureText(text, fontSize);
         }
         DrawText(text, 
-            t.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
-            t.rect.y + (TOWER_SIZE - fontSize) / 2,
+            (int)t.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
+            (int)t.rect.y + (TOWER_SIZE - fontSize) / 2,
             fontSize,
             WHITE);
     }
@@ -1457,8 +1498,8 @@ void level_draw(GameState *state)
     snprintf(text, sizeof(text), "%d", state->home.health);
     textWidthPixels = MeasureText(text, FONT_SIZE);
     DrawText(text, 
-        state->home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
-        state->home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
+        (int)state->home.rect.x + (TOWER_SIZE - textWidthPixels) / 2,
+        (int)state->home.rect.y + (TOWER_SIZE - FONT_SIZE) / 2,
         FONT_SIZE,
         BLACK);
 
@@ -1493,28 +1534,28 @@ void level_draw(GameState *state)
             textWidthPixels = MeasureText(text, fontSize);
         }
         DrawText(text, 
-            e.pos.x - textWidthPixels / 2,
-            e.pos.y - fontSize / 2,
+            (int)e.pos.x - textWidthPixels / 2,
+            (int)e.pos.y - fontSize / 2,
             fontSize,
             BLACK);
     #ifdef _DEBUG
         snprintf(text, sizeof(text), "%.4f", e.health);
         textWidthPixels = MeasureText(text, 10);
         DrawText(text, 
-            e.pos.x - textWidthPixels / 2,
-            e.pos.y + fontSize / 2,
+            (int)e.pos.x - textWidthPixels / 2,
+            (int)e.pos.y + fontSize / 2,
             10,
             BLACK);
     #endif
     }
 
     // Shots
-    for (int i = state->shotTail; i < state->shotHead; ++i)
+    for (unsigned int i = state->shotTail; i < state->shotHead; ++i)
     {
         Shot s = state->shots[i % MAX_SIMUL_SHOTS];
 
-        Vector2 varTower = {rand() % 4 - 2, rand() % 4 - 2};
-        Vector2 varTarget = {rand() % 8 - 4, rand() % 8 - 4};
+        Vector2 varTower = {rand() % 4 - 2.f, rand() % 4 - 2.f};
+        Vector2 varTarget = {rand() % 8 - 4.f, rand() % 8 - 4.f};
 
         DrawLineV(
             Vector2Add(state->towers[s.tower].center, varTower), 
@@ -1528,7 +1569,7 @@ void level_draw(GameState *state)
         if (state->msg[i].frames <= 0)
             continue;
 
-        DrawText("Saved by\nRounding", state->msg[i].pos.x, state->msg[i].pos.y, FONT_SIZE / 2, 
+        DrawText("Saved by\nRounding", (int)state->msg[i].pos.x, (int)state->msg[i].pos.y, FONT_SIZE / 2, 
             (state->msg[i].frames % 4) < 2 ? RED : BLACK);
     }
 }
@@ -1536,30 +1577,38 @@ void level_draw(GameState *state)
 void playground(GameState *state)
 {
     Camera2D camera = { 0 };
-    camera.target = (Vector2){ screenWidth / 2, screenHeight / 2 };
-    camera.offset = (Vector2){ screenWidth/2.0f, screenHeight/2.0f };
-    camera.rotation = 0.0f;
-    camera.zoom = 1.0f;
+    camera.target = (Vector2){ screenWidth/2.f, screenHeight/2.f };
+    camera.offset = (Vector2){ screenWidth/2.f, screenHeight/2.f };
+    camera.rotation = 0.f;
+    camera.zoom = 1.f;
 
-    unsigned int frame = -600; // test rollover robustness
+    unsigned int frame = (unsigned int)-600; // test rollover robustness
     
-    Rectangle path = {100, 200, screenWidth - 100, TOWER_SIZE};
     int currentType = ET_SUB;
 
-    Rectangle guiArea = {0, screenHeight - BUTTON_SIZE - GUI_SPACING*2, screenWidth, BUTTON_SIZE + GUI_SPACING*2};
-    Rectangle guiAreaTop = {0, 0, screenWidth, TOWER_SIZE + 1};
-    Rectangle guiAreaRight = {screenWidth - 150, 0, screenWidth, screenHeight};
-    Rectangle countBox = {screenWidth - 124, 32, 120, 24};
+    Rectangle countBox = {(float)screenWidth - 124, 32, 120, 24};
     char countText[16] = "3";
-    Rectangle healthBox = {screenWidth - 124, 60, 120, 24};
+    Rectangle healthBox = {(float)screenWidth - 124, 60, 120, 24};
     char healthText[256] = "1,2,3,-3,-2,-1,0.1,0.5,0.9";
-    Rectangle spacingBox = {screenWidth - 124, 88, 120, 24};
+    Rectangle spacingBox = {(float)screenWidth - 124, 88, 120, 24};
     char spacingText[16] = "120";
     int editBoxActive = EB_NONE;
-    Rectangle queueButton = {screenWidth - 124, 116, 120, 24};
-    Rectangle encodeButton = {screenWidth - 124, 300, 120, 24};
-    Rectangle towerCheckbox = {screenWidth - 124, 328, 24, 24};
-    Rectangle decodeButton = {screenWidth - 124, 356, 120, 24};
+    Rectangle queueButton = {(float)screenWidth - 124, 116, 120, 24};
+    Rectangle encodeButton = {(float)screenWidth - 124, 300, 120, 24};
+    Rectangle towerCheckbox = {(float)screenWidth - 124, 328, 24, 24};
+    Rectangle decodeButton = {(float)screenWidth - 124, 356, 120, 24};
+    enum PlaygroundGuiArea {
+        TOWERS,
+        PRECISION,
+        SPEED_CONTROL,
+        EDITS_RIGHT,
+    };
+    Rectangle guiRects[] = {
+        [PRECISION] = {0, (float)screenHeight - BUTTON_SIZE*2 - GUI_SPACING*3, BUTTON_SIZE + GUI_SPACING*2, BUTTON_SIZE + GUI_SPACING*2},
+        [TOWERS] = {0, (float)screenHeight - BUTTON_SIZE - GUI_SPACING*2, (float)screenWidth, BUTTON_SIZE + GUI_SPACING*2},
+        [SPEED_CONTROL] = {0, 0, (float)screenWidth, TOWER_SIZE + 1},
+        [EDITS_RIGHT] = {(float)screenWidth - 150, 0, (float)screenWidth, (float)screenHeight},
+    };
 
     bool paused = false;
     bool sceneChange = false;
@@ -1579,70 +1628,38 @@ void playground(GameState *state)
             sceneChange = true;
             break;
         }
-
-        if (CheckCollisionPointRec(GetMousePosition(), countBox) && IsMouseButtonPressed(0))
-        {
-            editBoxActive = EB_COUNT;
-        }
-        if (CheckCollisionPointRec(GetMousePosition(), healthBox) && IsMouseButtonPressed(0))
-        {
-            editBoxActive = EB_HEALTH;
-        }
-        if (CheckCollisionPointRec(GetMousePosition(), spacingBox) && IsMouseButtonPressed(0))
-        {
-            editBoxActive = EB_SPACING;
-        }
-
         if (IsKeyPressed(KEY_R))
         {
             state_reset(state);
         }
-
-        int tileX = GetMouseX() / TOWER_SIZE;
-        int tileY = GetMouseY() / TOWER_SIZE;
-
         if (IsKeyPressed(KEY_SPACE))
         {
             paused = !paused;
         }
 
+        if (CheckCollisionPointRec(GetMousePosition(), countBox) && IsMouseButtonPressed(0))
+            editBoxActive = EB_COUNT;
+        if (CheckCollisionPointRec(GetMousePosition(), healthBox) && IsMouseButtonPressed(0))
+            editBoxActive = EB_HEALTH;
+        if (CheckCollisionPointRec(GetMousePosition(), spacingBox) && IsMouseButtonPressed(0))
+            editBoxActive = EB_SPACING;
+
         // TODO: Optimize this / make a sane version of this check
-        bool canPlaceTower = editBoxActive == EB_NONE && currentType != ET_NONE;
-        if (canPlaceTower) // check GUI
-        {
-            canPlaceTower = !CheckCollisionPointRec(GetMousePosition(), guiAreaRight);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiAreaTop);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), path);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), state->home.rect);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), guiArea);
-            canPlaceTower &= !CheckCollisionPointRec(GetMousePosition(), 
-                CLITERAL(Rectangle){0, screenHeight - BUTTON_SIZE*2 - GUI_SPACING*3, BUTTON_SIZE + GUI_SPACING*2, BUTTON_SIZE + GUI_SPACING*2});
-        }
-        int towerAtMouse = -1;
-        if (canPlaceTower) // check other towers
-        {
-            for (int i = 0; i < state->towerLen; ++i) {
-                if (CheckCollisionPointRec(GetMousePosition(), state->towers[i].rect))
-                {
-                    towerAtMouse = i;
-                    EquationType typeAtMouse = state->towers[towerAtMouse].type;
-                    if (typeAtMouse != currentType)
-                        canPlaceTower = false;
-                    else if (!TOWER_DEF[typeAtMouse].canUpgrade)
-                        canPlaceTower = false;
-                    break;
-                }
-            }
-        }
+        int tileX = GetMouseX() / TOWER_SIZE;
+        int tileY = GetMouseY() / TOWER_SIZE;
+        bool canPlaceTower = editBoxActive == EB_NONE;
+        int upgradeTowerIndex = -1;
+        checkPlaceTower(&canPlaceTower, &upgradeTowerIndex, state, GetMousePosition(), currentType, 
+                guiRects, ARRAY_SIZE(guiRects));
         if (IsMouseButtonPressed(0) && state->towerLen < MAX_TOWERS && canPlaceTower)
         {
-            if (towerAtMouse == -1)
+            if (upgradeTowerIndex == -1)
             {
-                int scale = TOWER_DEF[currentType].scale;
-                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, scale);
+                int tScale = TOWER_DEF[currentType].scale;
+                state_addTower(state->towers, &state->towerLen, tileX, tileY, currentType, tScale);
             }
             else 
-                state->towers[towerAtMouse].scale += 1;
+                state->towers[upgradeTowerIndex].scale += 1;
         }
 
         // ------------------ Logic ------------------
@@ -1663,7 +1680,7 @@ void playground(GameState *state)
 
         BeginMode2D(camera);
 
-        DrawRectangleRec(path, WHITE);
+        DrawRectangleRec(state->path, WHITE);
 
         // placement preview
         if (currentType != ET_NONE)
@@ -1671,7 +1688,7 @@ void playground(GameState *state)
             DrawRectangle(tileX * TOWER_SIZE, tileY * TOWER_SIZE, TOWER_SIZE, TOWER_SIZE, canPlaceTower ? GRAY : MAROON);
             if (canPlaceTower)
             {
-                DrawCircleLines((tileX + 0.5) * TOWER_SIZE, (tileY + 0.5) * TOWER_SIZE, TOWER_RANGE, GRAY);
+                DrawCircleLines((int)((tileX + 0.5f) * TOWER_SIZE), (int)((tileY + 0.5f) * TOWER_SIZE), TOWER_RANGE, GRAY);
             }
         }
 
@@ -1688,11 +1705,11 @@ void playground(GameState *state)
         }
         int btnPos = (screenWidth - 4 * 24 - 3 * GUI_SPACING) / 2;
         bool speedBtnActive = paused;
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
         paused = speedBtnActive;
         btnPos += 24 + GUI_SPACING;
         speedBtnActive = (speedLevel == 1 && !paused);
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PLAY, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PLAY, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
             speedLevel = 1;
@@ -1700,7 +1717,7 @@ void playground(GameState *state)
         }
         btnPos += 24 + GUI_SPACING;
         speedBtnActive = (speedLevel == 4 && !paused);
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
             speedLevel = 4;
@@ -1708,7 +1725,7 @@ void playground(GameState *state)
         }
         btnPos += 24 + GUI_SPACING;
         speedBtnActive = (speedLevel == 12 && !paused);
-        GuiToggle((Rectangle){btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
+        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
         if (speedBtnActive)
         {
             speedLevel = 12;
@@ -1721,19 +1738,19 @@ void playground(GameState *state)
         }
 
         btnPos = screenWidth - GUI_SPACING - 60;
-        if (GuiButton((Rectangle){btnPos, 4, 60, 24}, "Primes"))
+        if (GuiButton((Rectangle){(float)btnPos, 4, 60, 24}, "Primes"))
         {
             healthText[0] = 0;
             strncat(healthText, "2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131", sizeof(healthText) - 1);
         }
         btnPos -= 60 + GUI_SPACING;
-        if (GuiButton((Rectangle){btnPos, 4, 60, 24}, "Log 10"))
+        if (GuiButton((Rectangle){(float)btnPos, 4, 60, 24}, "Log 10"))
         {
             healthText[0] = 0;
             strncat(healthText, "1,10,100,1000,1e5,1e6,1e7,1e8,1e9,1e10", sizeof(healthText) - 1);
         }
         btnPos -= 60 + GUI_SPACING;
-        if (GuiButton((Rectangle){btnPos, 4, 60, 24}, "+/-"))
+        if (GuiButton((Rectangle){(float)btnPos, 4, 60, 24}, "+/-"))
         {
             healthText[0] = 0;
             strncat(healthText, "1,-2,3,-4,5,-6,7,-8,9,-10,11,-12,13,-14,15,-16,17,-18,19,-20,21,-22,23,-24,25,-26,27,-28,29,-30,31,-32", sizeof(healthText) - 1);
@@ -1815,7 +1832,7 @@ void playground(GameState *state)
             char name[256] = "";
             char health[sizeof(healthText)] = "";
             Tower towers[MAX_TOWERS] = {0};
-            int towerCnt = 0;
+            unsigned int towerCnt = 0;
             bool res = state_levelFromString(&level, name, sizeof(name), health, sizeof(health),
                     towers, &towerCnt, clipboard);
             if (res)
@@ -1853,11 +1870,11 @@ void playground(GameState *state)
                 continue;
 
             if (tdx == ET_ROUND)
-                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale - 1, 1.0f / powf(10, TOWER_DEF[tdx].scale - 1));
+                snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale - 1, 1 / powf(10, (float)TOWER_DEF[tdx].scale - 1));
             else
                 snprintf(text, sizeof(text), TOWER_DEF[tdx].text, TOWER_DEF[tdx].scale);
             bool active = currentType == tdx;
-            GuiToggle((Rectangle){ xPos, yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
+            GuiToggle((Rectangle){ (float)xPos, (float)yPos, BUTTON_SIZE, BUTTON_SIZE}, text, &active);
             if (active)
             {
                 currentType = tdx;
@@ -1866,7 +1883,7 @@ void playground(GameState *state)
         }
         xPos = 4;
         yPos -= BUTTON_SIZE + GUI_SPACING;
-        if (GuiButton((Rectangle){xPos, yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
+        if (GuiButton((Rectangle){(float)xPos, (float)yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
             GuiIconText(ICON_ARROW_LEFT, NULL)))
         {
             if (state->home.roundingFactor > 1)
@@ -1878,7 +1895,7 @@ void playground(GameState *state)
                 state->home.roundingFactor = 0;
             }
         }
-        if (GuiButton((Rectangle){xPos + (BUTTON_SIZE + GUI_SPACING) / 2, yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
+        if (GuiButton((Rectangle){(float)xPos + (BUTTON_SIZE + GUI_SPACING) / 2, (float)yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
             GuiIconText(ICON_ARROW_RIGHT, NULL)))
         {
             if (state->home.roundingFactor == 0)
@@ -1894,7 +1911,7 @@ void playground(GameState *state)
         if (state->home.roundingFactor == 0)
             snprintf(text, sizeof(text), "Precision: full float");
         else
-            snprintf(text, sizeof(text), "Precision: %.*f", (int)log10f(state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
+            snprintf(text, sizeof(text), "Precision: %.*f", (int)log10f((float)state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
         DrawText(text, xPos, yPos + (BUTTON_SIZE - FONT_SIZE) / 2, FONT_SIZE, BLACK);
 
     #ifdef _DEBUG
