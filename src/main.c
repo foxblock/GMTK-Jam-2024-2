@@ -336,8 +336,56 @@ bool hasAlreadyTargeted(int *list, int len, int index)
     return false;
 }
 
-#define FONT_SIZE 20
-#define MIN_FONT_SIZE 10
+void checkPlaceTower(bool *canPlace, int *upgradeIndex, 
+    GameState *state, Vector2 pos, EquationType selectedType, Rectangle *guiRects, int guiRectCount)
+{
+    assert(canPlace);
+    assert(state);
+
+    if (!*canPlace)
+        return;
+
+    if (state->towerLen >= MAX_TOWERS) { *canPlace = false; return; }
+    if (selectedType == ET_NONE) { *canPlace = false; return; }
+    if (CheckCollisionPointRec(pos, state->path)) { *canPlace = false; return; }
+    if (CheckCollisionPointRec(pos, state->home.rect))  { *canPlace = false; return; }
+
+    for (int idx = 0; idx < guiRectCount; ++idx)
+    {
+        if (CheckCollisionPointRec(pos, guiRects[idx]))
+        {
+            *canPlace = false;
+            return;
+        }
+    }
+
+    for (unsigned int i = 0; i < state->towerLen; ++i) {
+        if (CheckCollisionPointRec(pos, state->towers[i].rect))
+        {
+            EquationType typeAtMouse = state->towers[i].type;
+            if (typeAtMouse != selectedType)
+                *canPlace = false;
+            else if (!TOWER_DEF[typeAtMouse].canUpgrade || !state->home.upgradeAllowed)
+                *canPlace = false;
+            else
+                *upgradeIndex = i;
+            return;
+        }
+    }
+}
+
+int countAlive(Enemy *array, unsigned int count)
+{
+    int result = 0;
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        if (!array[i].alive)
+            continue;
+
+        ++result;
+    }
+    return result;
+}
 
 Color enemyColor(float health)
 {
@@ -348,6 +396,8 @@ Color enemyColor(float health)
     return PINK;
 }
 
+#define FONT_SIZE 20
+#define MIN_FONT_SIZE 10
 #define BUTTON_SIZE 40
 #define GUI_SPACING 4
 typedef enum EditBox 
@@ -1045,55 +1095,33 @@ void level_select(GameState *state)
     }
 }
 
-void checkPlaceTower(bool *canPlace, int *upgradeIndex, 
-    GameState *state, Vector2 pos, EquationType selectedType, Rectangle *guiRects, int guiRectCount)
+void speedControls(int *speedLevel, bool *paused, int xPos)
 {
-    assert(canPlace);
-    assert(state);
-
-    if (!*canPlace)
-        return;
-
-    if (state->towerLen >= MAX_TOWERS) { *canPlace = false; return; }
-    if (selectedType == ET_NONE) { *canPlace = false; return; }
-    if (CheckCollisionPointRec(pos, state->path)) { *canPlace = false; return; }
-    if (CheckCollisionPointRec(pos, state->home.rect))  { *canPlace = false; return; }
-
-    for (int idx = 0; idx < guiRectCount; ++idx)
+    GuiToggle((Rectangle){(float)xPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), paused);
+    xPos += 24 + GUI_SPACING;
+    bool speedBtnActive = (*speedLevel == 1 && !*paused);
+    GuiToggle((Rectangle){(float)xPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PLAY, NULL), &speedBtnActive);
+    if (speedBtnActive)
     {
-        if (CheckCollisionPointRec(pos, guiRects[idx]))
-        {
-            *canPlace = false;
-            return;
-        }
+        *speedLevel = 1;
+        *paused = false;
     }
-
-    for (unsigned int i = 0; i < state->towerLen; ++i) {
-        if (CheckCollisionPointRec(pos, state->towers[i].rect))
-        {
-            EquationType typeAtMouse = state->towers[i].type;
-            if (typeAtMouse != selectedType)
-                *canPlace = false;
-            else if (!TOWER_DEF[typeAtMouse].canUpgrade || !state->home.upgradeAllowed)
-                *canPlace = false;
-            else
-                *upgradeIndex = i;
-            return;
-        }
-    }
-}
-
-int countAlive(Enemy *array, unsigned int count)
-{
-    int result = 0;
-    for (unsigned int i = 0; i < count; ++i)
+    xPos += 24 + GUI_SPACING;
+    speedBtnActive = (*speedLevel == 4 && !*paused);
+    GuiToggle((Rectangle){(float)xPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
+    if (speedBtnActive)
     {
-        if (!array[i].alive)
-            continue;
-
-        ++result;
+        *speedLevel = 4;
+        *paused = false;
     }
-    return result;
+    xPos += 24 + GUI_SPACING;
+    speedBtnActive = (*speedLevel == 12 && !*paused);
+    GuiToggle((Rectangle){(float)xPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
+    if (speedBtnActive)
+    {
+        *speedLevel = 12;
+        *paused = false;
+    }
 }
 
 void level(GameState *state)
@@ -1267,35 +1295,7 @@ void level(GameState *state)
         if (gameEnded)
             GuiLock();
 
-        int btnPos = screenWidth - (GUI_SPACING + 24) * 4;
-        bool speedBtnActive = paused;
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
-        paused = speedBtnActive;
-        btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 1 && !paused);
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PLAY, NULL), &speedBtnActive);
-        if (speedBtnActive)
-        {
-            speedLevel = 1;
-            paused = false;
-        }
-        btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 4 && !paused);
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
-        if (speedBtnActive)
-        {
-            speedLevel = 4;
-            paused = false;
-        }
-        btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 12 && !paused);
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
-        if (speedBtnActive)
-        {
-            speedLevel = 12;
-            paused = false;
-        }
-        btnPos += 24 + GUI_SPACING;
+        speedControls(&speedLevel, &paused, screenWidth - (GUI_SPACING + 24) * 4);
         if (paused)
         {
             int textW = MeasureText("PAUSED", FONT_SIZE * 2);
@@ -1829,34 +1829,7 @@ void playground(GameState *state)
             sceneChange = true;
             break;
         }
-        int btnPos = (screenWidth - 4 * 24 - 3 * GUI_SPACING) / 2;
-        bool speedBtnActive = paused;
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PAUSE, NULL), &speedBtnActive);
-        paused = speedBtnActive;
-        btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 1 && !paused);
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_PLAYER_PLAY, NULL), &speedBtnActive);
-        if (speedBtnActive)
-        {
-            speedLevel = 1;
-            paused = false;
-        }
-        btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 4 && !paused);
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT, NULL), &speedBtnActive);
-        if (speedBtnActive)
-        {
-            speedLevel = 4;
-            paused = false;
-        }
-        btnPos += 24 + GUI_SPACING;
-        speedBtnActive = (speedLevel == 12 && !paused);
-        GuiToggle((Rectangle){(float)btnPos, 4, 24, 24}, GuiIconText(ICON_ARROW_RIGHT_FILL, NULL), &speedBtnActive);
-        if (speedBtnActive)
-        {
-            speedLevel = 12;
-            paused = false;
-        }
+        speedControls(&speedLevel, &paused, (screenWidth - 4 * 24 - 3 * GUI_SPACING) / 2);
         if (validateRun)
         {
             int textW = MeasureText("VALIDATION IN PROGRESS", FONT_SIZE);
