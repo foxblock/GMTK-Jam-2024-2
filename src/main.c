@@ -603,8 +603,9 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
         bytes[idx++] = LEVEL_IDENT_CHAR;
     bytes[idx++] = LEVEL_STR_VERSION;
     bytes[idx++] = (unsigned char)nameLen;
-    // NOTE (JS, 25.04.26): we split after these 3 bytes (4 encoded) to insert the name in cleartext later
-    // I think this is nice, because you can easily identify level strings by the name
+    // NOTE (JS, 25.04.26): we split after these 3 bytes (4 encoded) to insert the name 
+    // in cleartext later. This is somewhat more complicated and tricky, but
+    // I think it's nice, because you can easily identify level strings by the name
 
     bytes[idx++] = (unsigned char)healthLen;
     memcpy(bytes + idx, level.health, healthLen);
@@ -676,6 +677,7 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     size_t bytesLen = base64_decode(bytes, sizeof(bytes), input, HEADER_ENC_SIZE);
     if (bytesLen == 0)
         return false;
+    assert(bytesLen == HEADER_SIZE);
 
     size_t idx = 0;
     bool isSolution = false;
@@ -692,7 +694,8 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     int nameLen = bytes[idx++];
     if (nameLen > nameCap)
         return false;
-    if (nameLen > inputLen - idx)
+    // read unencoded name from input directly
+    if (nameLen > inputLen - HEADER_ENC_SIZE)
         return false;
     memcpy(name, input + HEADER_ENC_SIZE, nameLen);
     name[nameLen] = 0;
@@ -703,16 +706,13 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
         if (name[ndx] == '_')
             name[ndx] = ' ';
 
-    // Header finished, decode the rest now
-    idx = 0;
+    // Header finished, decode the rest normally now
     input += HEADER_ENC_SIZE + nameLen;
     inputLen -= HEADER_ENC_SIZE + nameLen;
-    bytesLen = base64_decode(bytes, sizeof(bytes), input, inputLen);
+    bytesLen += base64_decode(bytes + idx, sizeof(bytes) - idx, input, inputLen);
     if (bytesLen == 0)
         return false;
 
-    if (idx >= bytesLen)
-        return false;
     int healthLen = bytes[idx++];
     if (healthLen > bytesLen - idx)
         return false;
