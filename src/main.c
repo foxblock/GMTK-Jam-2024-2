@@ -561,10 +561,8 @@ void state_loadFromLevelDef(GameState *state, LevelDef l, int index)
     state->home.levelIndex = index;
 }
 
-#define LEVEL_STR_VERSION 2
-static const int VERSION_SIZE = 1 + 1; // const char + version
-static const int LEVEL_NAME_SIZE = 1;
-#define HEADER_SIZE (VERSION_SIZE + LEVEL_NAME_SIZE)
+#define LEVEL_STR_VERSION 3
+static const int HEADER_SIZE = 1 + 1 + 1; // checksum + version + name length
 #define HEADER_ENC_SIZE (base64_strlen(HEADER_SIZE)-1) // minus 1 for null terminator
 static const int HEALTH_LEN_SIZE = 1; // health
 static const int LEVEL_DEF_SKIP_SIZE = 2 * sizeof(const char*) + sizeof(LevelCat);
@@ -573,6 +571,18 @@ static const int TOWER_BYTES_SIZE = sizeof(int) * 4;
 #define LEVEL_MIN_SIZE (HEADER_SIZE + HEALTH_LEN_SIZE + sizeof(LevelDef) - LEVEL_DEF_SKIP_SIZE + TOWER_LEN_SIZE)
 static const char LEVEL_IDENT_CHAR = 'L';
 static const char SOLUTION_IDENT_CHAR = 'S';
+
+unsigned char genChecksum(unsigned char *bytes, size_t len)
+{
+    assert(bytes);
+
+    unsigned char result = 0;
+    for (size_t idx = 0; idx < len; ++idx)
+    {
+        result ^= bytes[idx];
+    }
+    return result;
+}
 
 bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower towers[], int towerCnt)
 {
@@ -597,10 +607,11 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
     assert(bytes != NULL);
     size_t idx = 0;
 
-    if (towerCnt > 0)
-        bytes[idx++] = SOLUTION_IDENT_CHAR;
+    if (towerCnt == 0)
+        bytes[idx] = LEVEL_IDENT_CHAR;
     else
-        bytes[idx++] = LEVEL_IDENT_CHAR;
+        bytes[idx] = SOLUTION_IDENT_CHAR;
+    idx += 1;
     bytes[idx++] = LEVEL_STR_VERSION;
     bytes[idx++] = (unsigned char)nameLen;
     // NOTE (JS, 25.04.26): we split after these 3 bytes (4 encoded) to insert the name 
@@ -629,6 +640,12 @@ bool state_levelToString(char *output, size_t outputLen, LevelDef level, Tower t
 
     assert(idx == byteSize);
 
+    // NOTE(JS, 25.04.26): genChecksum needs to be reversible (e.g. XOR), because
+    // we override the ident byte with it and use it to reconstruct and check the
+    // ident byte on decoding.
+    // The way we do this, it is probably easily hackable/exploitable, but in my
+    // mind it should be fine for a silly game like this
+    bytes[0] = genChecksum(bytes, byteSize);
     const size_t encSize = base64_encode(output, outputLen, bytes, byteSize);
     if (encSize == 0)
     {
@@ -680,12 +697,7 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     assert(bytesLen == HEADER_SIZE);
 
     size_t idx = 0;
-    bool isSolution = false;
-    if (bytes[idx] == SOLUTION_IDENT_CHAR)
-        isSolution = true;
-    else if (bytes[idx] != LEVEL_IDENT_CHAR)
-        return false;
-    idx += 1;
+    idx++; // ignore checksum for now
     
     int version = bytes[idx++];
     if (version != LEVEL_STR_VERSION)
@@ -713,6 +725,12 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     if (bytesLen == 0)
         return false;
 
+    unsigned char checksum = genChecksum(bytes, bytesLen);
+    printf("Checksum: %c - %d\n", checksum, checksum);
+    if (checksum != LEVEL_IDENT_CHAR && checksum != SOLUTION_IDENT_CHAR)
+        return false;
+    bool isSolution = checksum == SOLUTION_IDENT_CHAR;
+
     int healthLen = bytes[idx++];
     if (healthLen > bytesLen - idx)
         return false;
@@ -739,6 +757,8 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     if (towerLen * TOWER_BYTES_SIZE > bytesLen - idx)
         return false;
     if (towerLen > MAX_TOWERS)
+        return false;
+    if ((isSolution && towerLen == 0) || (!isSolution && towerLen > 0))
         return false;
     for (int t = 0; t < towerLen; ++t)
     {
