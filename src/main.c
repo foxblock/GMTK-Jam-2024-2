@@ -236,12 +236,13 @@ void state_addTower(Tower *towers, unsigned int *towerLen, int tileX, int tileY,
     *towerLen += 1;
 }
 
-// returns true if all entries were added
-bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char *queue, unsigned int count, unsigned int spacing)
+// returns number of entries added
+int state_addQueueFromString(GameState *s, unsigned int startFrame, const char *queue, unsigned int count, unsigned int spacing)
 {
     assert(s);
     assert(spacing > 0);
 
+    int added = 0;
     unsigned int spawnFrame;
     if (s->queueHead == s->queueTail) // queue is empty -> spawn immediately
         spawnFrame = startFrame;
@@ -250,17 +251,19 @@ bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char 
     while (count > 0)
     {
         char *buffer = strdup(queue);
-        char *prev = buffer;
-        char *pos = strtok(prev, ",;");
+        char *pos = strtok(buffer, ",;");
         while (pos != NULL)
         {
             bool queueIsFull = (s->queueHead - s->queueTail >= QUEUE_SIZE);
             if (queueIsFull)
-                return false;
+                return added;
 
             float value = (float)atof(pos);
             if (value == 0 || !isfinite(value))
+            {
+                pos = strtok(NULL, ",;");
                 continue;
+            }
 
             s->queue[s->queueHead % QUEUE_SIZE] = (EnemyQueue){
                 .spawnFrame = spawnFrame,
@@ -268,7 +271,7 @@ bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char 
             };
             ++s->queueHead;
             spawnFrame += spacing;
-            prev = pos;
+            added += 1;
             pos = strtok(NULL, ",;");
         }
 
@@ -276,7 +279,7 @@ bool state_addQueueFromString(GameState *s, unsigned int startFrame, const char 
         --count;
     }
 
-    return true;
+    return added;
 }
 
 typedef enum TakeHealthResult
@@ -1982,10 +1985,13 @@ void playground(GameState *state)
             int spacing = atoi(spacingText);
             if (count > 0 && spacing > 0)
             {
-                validateRun = true;
-                state_addQueueFromString(state, frame, healthText, count, spacing);
-                state->home.health = HEALTH_DEFAULT;
-                speedLevel = 12;
+                int enemyCount = state_addQueueFromString(state, frame, healthText, count, spacing);
+                if (enemyCount > 0)
+                {
+                    validateRun = true;
+                    state->home.health = HEALTH_DEFAULT;
+                    speedLevel = 12;
+                }
             }
         }
         if (!levelValidated)
