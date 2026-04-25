@@ -696,6 +696,7 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
         return false;
     memcpy(name, input + HEADER_ENC_SIZE, nameLen);
     name[nameLen] = 0;
+    // revert whitespace conversion
     // NOTE (JS, 25.04.26): This will override all underscores in the original name, 
     // but that is fine to me...
     for (int ndx = 0; ndx < nameLen; ++ndx)
@@ -726,6 +727,10 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
         return false;
     unsigned char *structStart = (unsigned char*)output + LEVEL_DEF_SKIP_SIZE;
     memcpy(structStart, bytes + idx, structLen);
+    if (output->count <= 0 || output->spacing <= 0)
+        return false;
+    if (output->minSolution <= 0)
+        return false;
     idx += structLen;
 
     if (idx >= bytesLen)
@@ -738,7 +743,15 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     for (int t = 0; t < towerLen; ++t)
     {
         int *bytesStart = (int*)(bytes + idx);
-        state_addTower(towers, towerCnt, bytesStart[0], bytesStart[1], bytesStart[2], bytesStart[3]);
+        int tileX = bytesStart[0];
+        int tileY = bytesStart[1];
+        int type = bytesStart[2];
+        int scale = bytesStart[3];
+        if (type <= ET_NONE || type >= ET_EOL)
+            return false;
+        if (scale < 1)
+            return false;
+        state_addTower(towers, towerCnt, tileX, tileY, type, scale);
         idx += TOWER_BYTES_SIZE;
     }
 
@@ -1372,8 +1385,11 @@ void level(GameState *state)
 
         snprintf(text, sizeof(text), "Par: %d", state->home.minTowers);
         DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE * 2 - GUI_SPACING * 2, FONT_SIZE, BLACK);
-        snprintf(text, sizeof(text), "Precision: %.*f", 
-                (int)log10f((float)state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
+        
+        if (state->home.roundingFactor <= 0)
+            snprintf(text, sizeof(text), "Precision: full float");
+        else
+            snprintf(text, sizeof(text), "Precision: %.*f", (int)log10f((float)state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
         DrawText(text, screenWidth - 150, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
         
     #ifdef _DEBUG
@@ -2086,14 +2102,9 @@ void playground(GameState *state)
         if (GuiButton((Rectangle){(float)xPos, (float)yPos, (BUTTON_SIZE - GUI_SPACING) / 2, BUTTON_SIZE}, 
             GuiIconText(ICON_ARROW_LEFT, NULL)))
         {
-            if (state->home.roundingFactor > 1)
+            if (state->home.roundingFactor >= 0)
             {
                 state->home.roundingFactor /= 10;
-                levelValidated = false;
-            }
-            else if (state->home.roundingFactor == 1)
-            {
-                state->home.roundingFactor = 0;
                 levelValidated = false;
             }
         }
@@ -2117,7 +2128,7 @@ void playground(GameState *state)
         else
             strcpy(text, "Par: ??");
         DrawText(text, screenWidth - 84, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
-        if (state->home.roundingFactor == 0)
+        if (state->home.roundingFactor <= 0)
             snprintf(text, sizeof(text), "Precision: full float");
         else
             snprintf(text, sizeof(text), "Precision: %.*f", (int)log10f((float)state->home.roundingFactor), 1 / (float)state->home.roundingFactor);
