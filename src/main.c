@@ -73,7 +73,7 @@ const TowerDefault TOWER_DEF[] = {
     [ET_COS] = { "cos", 1, _target_all, false },
     [ET_TAN] = { "tan", 1, _target_tan, false },
 };
-static_assert(ARRAY_SIZE(TOWER_DEF) == ET_EOL);
+static_assert(ARRAY_SIZE(TOWER_DEF) == ET_EOL, "Not all tower types defined in TOWER_DEF");
 
 #define HEALTH_DEFAULT 10
 // TODO: Split this more sensibly into "LevelParams" struct or something
@@ -685,7 +685,9 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
     assert(health);
     assert(towers);
     assert(towerCnt);
-    assert(input);
+    
+    if (!input)
+        return false;
 
     size_t inputLen = strlen(input);
     if (inputLen < base64_strlen(LEVEL_MIN_SIZE))
@@ -838,9 +840,19 @@ void playground(GameState *state);
 void level_logic(GameState *state, unsigned int frame);
 void level_draw(GameState *state);
 
+#ifdef PLATFORM_WEB
+    // NOTE (JS, 30.04.26): Resizable window would always give us a 800x700 canvas
+    // for some reason, even though we create a 800x450 one. Calling SetWindowSize
+    // again would fix it, but only until the user zoomed the page
+    #define CONFIG_FLAGS FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT
+#else
+    #define CONFIG_FLAGS FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT
+#endif
+
+
 int main(void)
 {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_MSAA_4X_HINT);
+    SetConfigFlags(CONFIG_FLAGS);
     InitWindow(screenWidth, screenHeight, "A puzzling tower defense game for beautiful math nerds.");
     SetWindowMinSize(screenWidth, screenHeight);
 
@@ -908,10 +920,19 @@ int main(void)
 
 void UpdateGlobalScaling() 
 {
+#ifdef PLATFORM_WEB
+    // NOTE (JS, 30.04.26): SetWindowSize seems to be necessary here, otherwise
+    // the game is drawn slightly bigger than the canvas when the user zooms the
+    // page. (even though we always call it with the same initial values)
+    // The rest of the scaling/offset code is not called, because the canvas size
+    // never changes (even when zoomed, which does not affect it)
+    SetWindowSize(screenWidth, screenHeight);
+#else
     scale = MIN((float)GetScreenWidth()/screenWidth, (float)GetScreenHeight()/screenHeight);
 
     SetMouseOffset((int)(-(GetScreenWidth() - screenWidth * scale) / 2.f), (int)(-(GetScreenHeight() - screenHeight * scale) / 2.f));
     SetMouseScale(1/scale, 1/scale);
+#endif
 }
 
 void DrawScreenScaled()
@@ -990,6 +1011,7 @@ void menu(void)
             sceneChange = true;
         }
         yPos += 32;
+    #ifndef PLATFORM_WEB
         if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 96, 24}, "Size 1x"))
         {
             int w = GetScreenWidth();
@@ -1009,6 +1031,7 @@ void menu(void)
             UpdateGlobalScaling();
         }
         yPos += 32;
+    #endif
         if (GuiButton((Rectangle){screenWidth / 2.f - 100, (float)yPos, 200, 24}, "Exit"))
         {
             scene = SC_EXIT;
