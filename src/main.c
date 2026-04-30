@@ -21,6 +21,12 @@
 #define FLAG_TEST(v, index) ((v & 1 << index) > 0)
 #define FLAG_TOGGLE(v, index) (v ^= 1 << index)
 
+#ifdef _DEBUG
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...) ((void)0)
+#endif
+
 typedef struct TowerDefault
 {
     const char *text;
@@ -487,6 +493,7 @@ const LevelDef LEVELS[] = {
         .spacing = QUEUE_SPACING_DEFAULT,
         .towersAllowed = (1 << ET_NONE) | (1 << ET_SUB) | (1 << ET_MULT) | (1 << ET_DIV) | (1 << ET_SQR) | (1 << ET_SQRT),
         .minSolution = 5, // [²], [sqrt], [-1] * 3
+        // better solution: [/2], [/2], [²], [-1]
         .roundingFactor = 1,
     },
     {
@@ -528,6 +535,7 @@ const LevelDef LEVELS[] = {
         .spacing = QUEUE_SPACING_DEFAULT,
         .towersAllowed = (1 << ET_NONE) | (1 << ET_ADD) | (1 << ET_SUB) | (1 << ET_MULT) | (1 << ET_DIV) | (1 << ET_SQR) | (1 << ET_SQRT) | (1 << ET_LOG_10),
         .minSolution = 8, // [log_10] * 2, [+1], [sqrt] * 4, [-1]
+        // better solution: [log_10] * 3, [+1], [log_10], [²] * 2
         .roundingFactor = 10,
     },
     {
@@ -538,6 +546,7 @@ const LevelDef LEVELS[] = {
         .spacing = QUEUE_SPACING_DEFAULT,
         .towersAllowed = (1 << ET_NONE) | (1 << ET_ADD) | (1 << ET_SUB) | (1 << ET_MULT) | (1 << ET_DIV) | (1 << ET_SQR) | (1 << ET_SQRT) | (1 << ET_LOG_10),
         .minSolution = 9, // [²], [log_10], [+1], [sqrt]*5, [-1]
+        // better solution: [²], [log_10] * 2, [+1], [log_10], [+1], [log_10], [²]
         .roundingFactor = 10,
     },
     {
@@ -731,7 +740,7 @@ bool state_levelFromString(LevelDef *output, char *name, size_t nameCap, char *h
         return false;
 
     unsigned char checksum = genChecksum(bytes, bytesLen);
-    printf("Checksum: %c - %d\n", checksum, checksum);
+    DEBUG_PRINT("Checksum: %c - %d\n", checksum, checksum);
     if (checksum != LEVEL_IDENT_CHAR && checksum != SOLUTION_IDENT_CHAR)
         return false;
     bool isSolution = checksum == SOLUTION_IDENT_CHAR;
@@ -1038,6 +1047,11 @@ void menu(void)
             sceneChange = true;
         }
         yPos += 32;
+
+        if (GuiButton((Rectangle){(float)screenWidth - 158, (float)screenHeight - FONT_SIZE - GUI_SPACING*2 - 42, 150, 42}, "Post your levels\non itch.io"))
+        {
+            OpenURL("https://foxblock.itch.io/math-td");
+        }
 
         DrawText("Built with raylib", GUI_SPACING, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
         DrawText("Game by Janek", screenWidth - 156, screenHeight - FONT_SIZE - GUI_SPACING, FONT_SIZE, BLACK);
@@ -1545,7 +1559,6 @@ void level_logic(GameState *state, unsigned int frame)
                         .pos = { e->pos.x - 30, e->pos.y - ENEMY_SIZE - GUI_SPACING },
                         .frames = SAVED_MSG_LIFETIME,
                     };
-                    printf("Saved by rounding\n");
                     break;
             }
         }
@@ -2045,12 +2058,18 @@ void playground(GameState *state)
             if (res)
             {
                 SetClipboardText(levelStr);
-                printf("Successfully copied level to clipboard!\n");
-                if (copySolution)
-                    statusText = "Solution copied to clipboard";
+                printf("%s data: %s\n", copySolution ? "Solution" : "Level", levelStr);
+                const char *clipboard = GetClipboardText();
+                if (strcmp(clipboard, levelStr) != 0)
+                {
+                    statusText = "Failed to access clipboard. Copy data manually from terminal output.";
+                    statusGood = false;
+                }
                 else
-                    statusText = "Level copied to clipboard";
-                statusGood = true;
+                {
+                    statusText = copySolution ? "Solution copied to clipboard" : "Level copied to clipboard";
+                    statusGood = true;
+                }
                 statusShowTime = GetTime();
             }
             else
@@ -2102,6 +2121,10 @@ void playground(GameState *state)
             {
                 printf("ERROR: Failed to load level from string!\n");
                 statusText = "Failed to load";
+            #ifdef PLATFORM_WEB
+                if (clipboard == NULL)
+                    statusText = "Not available in web, please download the Windows build"; 
+            #endif
                 statusGood = false;
                 statusShowTime = GetTime();
             }
